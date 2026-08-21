@@ -1,5 +1,7 @@
 # Hedge Fund Leaderboard — Standalone Demo
 
+[Live Demo on GitHub Pages](https://mlff-fall2026.github.io/mlff-fall2026-student-materials/Supporting/LeaderBoardDemo/LeaderBoard-Demo.html)
+
 This folder is a **fully self-contained teaching demo** of the leaderboard
 dashboard. It fabricates submission histories for five fictional funds,
 downloads real Yahoo Finance prices for the trading universe, and runs both
