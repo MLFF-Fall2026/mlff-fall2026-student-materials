@@ -1,0 +1,6 @@
+project:
+  type: default
+  execute-dir: project
+  render:
+    - "*.qmd"
+    - "!archive/"

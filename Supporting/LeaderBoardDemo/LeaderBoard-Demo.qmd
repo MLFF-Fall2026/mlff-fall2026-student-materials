@@ -1,0 +1,649 @@
+---
+title: "Hedge Fund Exercise Leaderboard"
+subtitle: "Demo with 5 fake funds"
+format:
+  html:
+    theme: cosmo
+    page-layout: full
+    toc: false
+    css: styles.css
+    embed-resources: true
+    standalone: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+
+```{r}
+#| warning: FALSE
+
+cat("\014")  # clear console
+rm(list = ls())  # clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "ProjectSetUp.R"))
+```
+
+
+```{r}
+#| label: setup
+
+# Regenerate the fictional demo funds fresh on every render (fetches Yahoo
+# Finance data and rebuilds all leaderboard calculations). This file and
+# everything it sources lives entirely under Supporting/LeaderBoardDemo/ 
+
+source("Supporting/LeaderBoaDemo/R/run_demo.R")
+
+x <- demo_data
+team_summary <- x$team_summary
+benchmark_summary <- x$benchmark_summary
+summary_all <- bind_rows(team_summary, benchmark_summary)
+daily <- x$daily_returns
+benchmark_daily <- x$benchmark_daily
+as_of <- as.Date(x$meta$as_of)
+benchmark <- x$meta$benchmark
+```
+
+::: {.callout-important appearance="simple"}
+**This is a demo, not the live competition dashboard.** It uses five entirely fictional funds and real Yahoo Finance prices from **`r format(x$meta$demo_start, "%B %d, %Y")` through `r format(x$meta$demo_end, "%B %d, %Y")`**, regenerated fresh on every render. Ranking is based on turnover-adjusted Sharpe, $SR_{TO} = SR - \lambda\overline{TO}$, with $\lambda = 0.5$.
+:::
+
+::: {.panel-tabset}
+
+## Executive Performance Summary
+
+### Performance Leaderboard
+
+```{r}
+#| label: performance-table
+perf_tbl <- summary_all |>
+  transmute(
+    Rank = rank,
+    Fund = team,
+    WTD = wtd,
+    MTD = mtd,
+    `Trailing 4-Week` = trailing_4w,
+    ITD = itd,
+    `SR_{TO}` = sr_f,
+    SR = sharpe,
+    `Avg Weekly TO` = avg_weekly_turnover,
+    `Information Ratio` = information_ratio
+  )
+
+perf_gt <- perf_tbl |>
+  gt(rowname_col = "Fund") |>
+  tab_header(
+    title = md("**Performance Leaderboard**"),
+    subtitle = paste("As of", format(as_of, "%B %d, %Y"), "| Benchmark:", benchmark)
+  ) |>
+  fmt_percent(columns = c(WTD, MTD, `Trailing 4-Week`, ITD, `Avg Weekly TO`), decimals = 2) |>
+  fmt_number(columns = c(`SR_{TO}`, SR, `Information Ratio`), decimals = 2) |>
+  fmt_integer(columns = Rank) |>
+  sub_missing(columns = everything(), missing_text = "—") |>
+  cols_align(align = "center", columns = everything()) |>
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = Rank == 1)
+  ) |>
+  tab_style(
+    style = list(cell_fill(color = "#f2f2f2"), cell_text(weight = "bold")),
+    locations = cells_body(rows = Fund == benchmark)
+  ) |>
+  tab_source_note(
+    source_note = md("**Rank:** standard competition ranking (1, 2, 2, 4) among rank-eligible funds, based on SR_{TO}. IVV is shown for reference and is never ranked.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Fund:** the student fund name, or IVV shown for reference as the trading benchmark.")
+  ) |>
+  tab_source_note(
+    source_note = md("**WTD:** week-to-date compounded return, from the most recent Monday through the as-of date.")
+  ) |>
+  tab_source_note(
+    source_note = md("**MTD:** month-to-date compounded return, from the first trading day of the current month through the as-of date.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Trailing 4-Week:** compounded return over the trailing 20 trading days ending on the as-of date.")
+  ) |>
+  tab_source_note(
+    source_note = md("**ITD:** inception-to-date compounded return, computed since the fund's first trading day.")
+  ) |>
+  tab_source_note(
+    source_note = md("**SR_{TO}:** turnover-adjusted Sharpe ratio, computed since inception: $SR_{TO} = SR - \\lambda\\overline{TO}$, where $\\lambda = 0.5$ and $\\overline{TO}$ is average weekly turnover since inception.")
+  ) |>
+  tab_source_note(
+    source_note = md("**SR:** annualized Sharpe ratio, computed since inception. Undefined until a fund has 10 valid daily return observations.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Avg Weekly TO:** average weekly turnover (sum of absolute weight changes across effective position matrices) since inception.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Information Ratio:** annualized ratio of mean active return (over the benchmark) to tracking error, computed since inception. Undefined until a fund has 10 valid daily return observations; not defined for IVV, since its active return versus itself is identically zero.")
+  ) |>
+  tab_source_note(
+    source_note = md("Returns are computed from adjusted closing prices.")
+  ) |>
+  tab_source_note(
+    source_note = md("Source: Yahoo Finance")
+  )
+
+perf_gt
+```
+
+### Rebased Growth Index
+
+```{r}
+#| label: equity-curve
+team_equity <- daily |>
+  select(date, team, equity_index)
+
+bench_equity <- benchmark_daily |>
+  transmute(date, team = benchmark, equity_index)
+
+# The first recorded equity_index already reflects that day's return, so no
+# series ever actually passes through 100. Add an inception anchor point the
+# day before the earliest date so each line visibly starts at 100.
+inception_date <- min(team_equity$date, bench_equity$date) - 1
+
+team_equity <- team_equity |>
+  distinct(team) |>
+  mutate(date = inception_date, equity_index = 100) |>
+  bind_rows(team_equity) |>
+  arrange(team, date)
+
+bench_equity <- bench_equity |>
+  distinct(team) |>
+  mutate(date = inception_date, equity_index = 100) |>
+  bind_rows(bench_equity) |>
+  arrange(team, date)
+
+p_equity <- ggplot() +
+  geom_line(
+    data = team_equity,
+    aes(date, equity_index, color = team, group = team),
+    linewidth = 0.9
+  ) +
+  geom_line(
+    data = bench_equity,
+    aes(date, equity_index),
+    linewidth = 1.25,
+    linetype = "dashed",
+    color = "black"
+  ) +
+  labs(
+    x = NULL,
+    y = "Growth Index",
+    color = "Fund",
+    title = "Growth of 100",
+    subtitle = "Portfolio returns use target weights and adjusted prices; IVV is the dashed benchmark."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+
+ggplotly(p_equity, tooltip = c("x", "y", "colour"))
+```
+
+## Fund Composition
+
+### Fund Composition Table
+
+```{r}
+#| label: composition-table
+comp_tbl <- x$fund_composition |>
+  left_join(
+    team_summary |> select(team, rank, sr_f),
+    by = "team"
+  ) |>
+  arrange(rank, desc(sr_f), team) |>
+  transmute(
+    Fund = team,
+    `Max Positions` = max_positions,
+    `Min Positions` = min_positions,
+    `Current Positions` = current_positions,
+    `Effective # of Bets` = effective_bets,
+    `Top 10 Concentration` = top10_concentration
+  )
+
+comp_tbl |>
+  gt(rowname_col = "Fund") |>
+  tab_header(
+    title = md("**Fund Composition**"),
+    subtitle = paste("As of", format(as_of, "%B %d, %Y"))
+  ) |>
+  fmt_integer(columns = c(`Max Positions`, `Min Positions`, `Current Positions`)) |>
+  fmt_number(columns = `Effective # of Bets`, decimals = 1) |>
+  fmt_percent(columns = `Top 10 Concentration`, decimals = 1) |>
+  sub_missing(columns = everything(), missing_text = "—") |>
+  cols_align(align = "center", columns = everything()) |>
+  tab_source_note(
+    source_note = md("**Fund:** the student fund name. IVV is excluded, since it is a single-instrument reference benchmark rather than a managed portfolio.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Max Positions / Min Positions:** the maximum and minimum number of distinct nonzero positions (long or short) held on any valuation date since the fund's first effective position matrix. No limit or benchmark is imposed; these are purely descriptive.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Current Positions:** the number of distinct nonzero positions held as of the latest date with a valid effective position matrix.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Effective # of Bets:** $1 / \\sum_i p_i^2$, where $p_i$ is position $i$'s share of current gross exposure, $p_i = |V_i| / \\sum_j |V_j|$. Uses absolute market values so long and short positions do not offset one another. Lower values indicate exposure concentrated in fewer positions; higher values indicate exposure spread more evenly. Neither is inherently better.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Top 10 Concentration:** the share of current gross exposure represented by the 10 largest positions by absolute market value (all positions, if fewer than 10 are held).")
+  ) |>
+  tab_source_note(
+    source_note = md("Position counts are computed since fund inception; Effective # of Bets and Top 10 Concentration use only the latest valid position matrix.")
+  ) |>
+  tab_source_note(
+    source_note = md("Funds are listed in leaderboard rank order for consistency with other tabs.")
+  )
+```
+
+## Return Attribution
+
+### Contribution by Fund
+
+```{r}
+#| label: attribution-bars
+attr_chart <- x$return_attribution$chart_data |>
+  filter(team %in% team_summary$team) |>
+  left_join(team_summary |> select(team, rank, sr_f), by = "team") |>
+  mutate(
+    team = factor(team, levels = (team_summary |> arrange(rank, desc(sr_f), team))$team),
+    category = factor(
+      category,
+      levels = c("Top Negative", "Other Negative", "Other Positive", "Top Positive")
+    )
+  ) |>
+  arrange(team, desc(stack_order))
+
+fund_totals <- x$return_attribution$reconciliation |>
+  filter(team %in% team_summary$team) |>
+  mutate(team = factor(team, levels = levels(attr_chart$team)))
+
+bucket_colors <- c(
+  "Top Negative" = "#a50f15",
+  "Other Negative" = "#fcae91",
+  "Other Positive" = "#a1d99b",
+  "Top Positive" = "#006d2c"
+)
+
+p_attr <- ggplot(attr_chart, aes(x = team, y = contribution, fill = category)) +
+  geom_col(
+    aes(group = stack_order, text = paste0(label, ": ", percent(contribution, accuracy = 0.1))),
+    position = position_stack(reverse = TRUE),
+    width = 0.6
+  ) +
+  geom_hline(yintercept = 0, linewidth = 0.4) +
+  geom_point(
+    data = fund_totals,
+    aes(x = team, y = attribution_total),
+    inherit.aes = FALSE,
+    shape = 18,
+    size = 3
+  ) +
+  scale_fill_manual(values = bucket_colors) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    x = NULL,
+    y = "Return Contribution",
+    fill = "Category",
+    title = "Since-Inception Return Attribution",
+    subtitle = "Diamond marks each fund's total return; hover a segment for its ticker"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+
+ggplotly(p_attr, tooltip = "text") |>
+  layout(hovermode = "closest")
+```
+
+::: {.callout-note appearance="simple"}
+Each bar aggregates every ticker the fund has ever held into its Top 5 positive contributors, Top 5 negative contributors, and separate **Other Positive** / **Other Negative** residuals, so the chart stays readable even for funds with 50+ historical positions. Contributions are linked across days using Carino logarithmic smoothing so that, for each fund, the segments sum exactly to its since-inception compounded return (marked with a diamond) — a simple sum of daily percentage contributions would not reconcile once returns compound over multiple periods. Days with pending/blocked market data contribute zero, consistent with how the equity curve treats them elsewhere in this dashboard. Higher or lower concentration of contribution across positions is not itself favorable or unfavorable; this view shows where return came from, not how it was constructed.
+:::
+
+### Attribution Reconciliation Check
+
+```{r}
+#| label: attribution-reconciliation
+recon_tbl <- x$return_attribution$reconciliation |>
+  filter(team %in% team_summary$team) |>
+  left_join(team_summary |> select(team, rank, sr_f), by = "team") |>
+  arrange(rank, desc(sr_f), team) |>
+  transmute(
+    Fund = team,
+    `Attribution Total` = attribution_total,
+    `Reported ITD Return` = total_return,
+    Difference = difference
+  )
+
+recon_tbl |>
+  gt(rowname_col = "Fund") |>
+  fmt_percent(columns = c(`Attribution Total`, `Reported ITD Return`), decimals = 2) |>
+  fmt_number(columns = Difference, decimals = 8) |>
+  cols_align(align = "center", columns = everything()) |>
+  tab_source_note(
+    source_note = md("**Attribution Total:** sum of every ticker's Carino-linked since-inception contribution.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Reported ITD Return:** the fund's compounded since-inception return implied by its daily equity curve, used as the reconciliation target.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Difference:** Attribution Total minus Reported ITD Return; expected to be ~0 (floating-point only). A material difference would indicate a data or linking issue rather than being forced to zero.")
+  )
+```
+
+### Selected Fund Detail
+
+```{r}
+#| label: attribution-detail
+detail_top_n <- 15L
+
+detail_data <- x$return_attribution$security_level |>
+  filter(team %in% team_summary$team) |>
+  group_by(team) |>
+  group_modify(function(df, key) {
+    df <- df |> arrange(desc(abs(total_contribution)))
+    top <- df |> slice_head(n = detail_top_n)
+    rest <- df |> slice_tail(n = max(0L, nrow(df) - detail_top_n))
+    out <- top |> transmute(label = symbol, contribution = total_contribution)
+    if (nrow(rest) > 0L) {
+      out <- bind_rows(
+        out,
+        tibble(label = "All Other Positions", contribution = sum(rest$total_contribution))
+      )
+    }
+    out |> arrange(contribution)
+  }) |>
+  ungroup() |>
+  mutate(
+    team = factor(team, levels = (team_summary |> arrange(rank, desc(sr_f), team))$team),
+    label = factor(label, levels = unique(label)),
+    sign = if_else(contribution >= 0, "Positive", "Negative")
+  )
+
+fund_levels <- levels(detail_data$team)
+
+# Each team gets its own numeric y-axis position (1..n, bottom-to-top by
+# contribution) rather than a shared categorical axis. Plotly renders a single
+# categorical axis shared across all traces in order of first appearance, so
+# reusing ticker names as y-values would leave hidden funds' bars mapped to
+# the wrong (or nonexistent) categories once you switch funds via the dropdown.
+detail_data <- detail_data |>
+  group_by(team) |>
+  arrange(contribution, .by_group = TRUE) |>
+  mutate(y_pos = row_number()) |>
+  ungroup()
+
+per_team <- detail_data |> group_by(team) |> group_split()
+
+fig <- plot_ly()
+for (df in per_team) {
+  fig <- add_trace(
+    fig,
+    data = df,
+    x = ~contribution,
+    y = ~y_pos,
+    type = "bar",
+    orientation = "h",
+    marker = list(color = ~if_else(contribution >= 0, "#006d2c", "#a50f15")),
+    visible = (as.character(df$team[[1]]) == fund_levels[[1]]),
+    name = as.character(df$team[[1]]),
+    showlegend = FALSE
+  )
+}
+
+buttons <- purrr::map(seq_along(fund_levels), function(i) {
+  vis <- rep(FALSE, length(fund_levels))
+  vis[i] <- TRUE
+  team_df <- per_team[[i]]
+  list(
+    method = "update",
+    args = list(
+      list(visible = as.list(vis)),
+      list(
+        yaxis = list(
+          title = "",
+          tickmode = "array",
+          tickvals = team_df$y_pos,
+          ticktext = as.character(team_df$label)
+        )
+      )
+    ),
+    label = fund_levels[[i]]
+  )
+})
+
+fig |>
+  layout(
+    title = "Largest Contributors and Detractors (Selected Fund)",
+    xaxis = list(title = "Return Contribution", tickformat = ".1%"),
+    yaxis = list(
+      title = "",
+      tickmode = "array",
+      tickvals = per_team[[1]]$y_pos,
+      ticktext = as.character(per_team[[1]]$label)
+    ),
+    showlegend = FALSE,
+    updatemenus = list(
+      list(
+        type = "dropdown",
+        active = 0,
+        x = 0,
+        xanchor = "left",
+        y = 1.15,
+        buttons = buttons
+      )
+    )
+  )
+```
+
+::: {.callout-note appearance="simple"}
+This view ranks a single fund's up-to-15 largest contributors and detractors by absolute since-inception contribution, with any remaining positions summarized in a single **All Other Positions** bar — avoiding a wall of 50-100+ individual bars. Use the dropdown to switch funds.
+:::
+
+## Deep-Dive Risk Profile
+
+### Underwater Plot
+
+```{r}
+#| label: underwater-plot
+underwater_team <- daily |>
+  select(date, team, drawdown) |>
+  mutate(
+    tooltip_text = paste0(
+      team, "<br>", format(date, "%b %d, %Y"), "<br>",
+      "Drawdown: ", percent_format(accuracy = 0.1)(drawdown)
+    )
+  )
+underwater_bench <- benchmark_daily |>
+  transmute(date, team = benchmark, drawdown) |>
+  mutate(
+    tooltip_text = paste0(
+      team, "<br>", format(date, "%b %d, %Y"), "<br>",
+      "Drawdown: ", percent_format(accuracy = 0.1)(drawdown)
+    )
+  )
+
+underwater_colors <- c(
+  setNames(scales::hue_pal()(length(unique(daily$team))), sort(unique(daily$team))),
+  setNames("black", benchmark)
+)
+
+p_dd <- ggplot() +
+  geom_line(
+    data = underwater_team,
+    aes(date, drawdown, color = team, group = team, text = tooltip_text),
+    linewidth = 0.8
+  ) +
+  geom_line(
+    data = underwater_bench,
+    aes(date, drawdown, color = team, group = team, text = tooltip_text),
+    linewidth = 1.1,
+    linetype = "dashed"
+  ) +
+  scale_color_manual(values = underwater_colors) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    x = NULL,
+    y = "Drawdown from Prior Peak",
+    color = "Fund",
+    title = "Underwater Performance"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+
+ggplotly(p_dd, tooltip = "text")
+```
+
+### Advanced Quant Risk
+
+```{r}
+#| label: risk-table
+current_beta <- daily |>
+  filter(date <= as_of) |>
+  group_by(team) |>
+  slice_tail(n = 1) |>
+  ungroup() |>
+  select(team, rolling_beta_10d)
+
+risk_tbl <- summary_all |>
+  left_join(current_beta, by = "team") |>
+  transmute(
+    Fund = team,
+    `Max Drawdown` = max_drawdown,
+    `Ann. Volatility` = annualized_volatility,
+    Sortino = sortino,
+    Skewness = skewness,
+    Kurtosis = kurtosis,
+    `VaR 95%` = var_95,
+    `CVaR 95%` = cvar_95,
+    `10D Beta` = rolling_beta_10d,
+    `Current Week TO` = current_week_turnover,
+    `Net Exposure` = current_net_exposure,
+    `Gross Exposure` = current_gross_exposure
+  )
+
+risk_tbl |>
+  gt(rowname_col = "Fund") |>
+  fmt_percent(columns = c(`Max Drawdown`, `Ann. Volatility`, `VaR 95%`, `CVaR 95%`, `Current Week TO`, `Net Exposure`, `Gross Exposure`), decimals = 2) |>
+  fmt_number(columns = c(Sortino, Skewness, Kurtosis, `10D Beta`), decimals = 2) |>
+  sub_missing(columns = everything(), missing_text = "—") |>
+  cols_align(align = "center", columns = everything()) |>
+  tab_style(
+    style = list(cell_fill(color = "#f2f2f2"), cell_text(weight = "bold")),
+    locations = cells_body(rows = Fund == benchmark)
+  ) |>
+  tab_source_note(
+    source_note = md("**Fund:** the student fund name, or IVV shown for reference as the trading benchmark.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Max Drawdown:** largest peak-to-trough decline in the cumulative return series since inception.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Ann. Volatility:** annualized standard deviation of daily returns, computed since inception.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Sortino:** annualized return relative to downside deviation, computed since inception, penalizing only returns below a 0% minimum acceptable return.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Skewness:** sample skewness of daily returns, computed since inception.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Kurtosis:** sample kurtosis (not excess kurtosis) of daily returns, computed since inception.")
+  ) |>
+  tab_source_note(
+    source_note = md("**VaR 95%:** empirical 5th percentile of daily returns (R quantile type 7), computed since inception. Retains the sign of returns: losses are negative.")
+  ) |>
+  tab_source_note(
+    source_note = md("**CVaR 95%:** mean daily return conditional on being at or below the VaR 95% threshold, computed since inception. Retains the sign of returns: losses are negative.")
+  ) |>
+  tab_source_note(
+    source_note = md("**10D Beta:** rolling regression beta of daily portfolio return on benchmark return, using the trailing 10 trading days. Not applicable for IVV.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Current Week TO:** sum of absolute weight changes across position matrix submissions effective during the current week.")
+  ) |>
+  tab_source_note(
+    source_note = md("**Net Exposure:** sum of current position weights (long minus short).")
+  ) |>
+  tab_source_note(
+    source_note = md("**Gross Exposure:** sum of absolute current position weights (long plus short).")
+  ) |>
+  tab_source_note(
+    source_note = md("Returns are computed from adjusted closing prices.")
+  ) |>
+  tab_source_note(
+    source_note = md("Source: Yahoo Finance")
+  )
+```
+
+### Rolling Active Exposure
+
+```{r}
+#| label: rolling-beta
+beta_data <- daily |>
+  filter(!is.na(rolling_beta_10d))
+
+p_beta <- ggplot(beta_data, aes(date, rolling_beta_10d, color = team, group = team)) +
+  geom_hline(yintercept = 1, linetype = "dashed", linewidth = 0.5) +
+  geom_hline(yintercept = 0, linewidth = 0.4) +
+  geom_line(linewidth = 0.85) +
+  labs(
+    x = NULL,
+    y = "10-Day Rolling Beta vs. IVV",
+    color = "Fund",
+    title = "Rolling Market Exposure"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+
+ggplotly(p_beta, tooltip = c("x", "y", "colour"))
+```
+
+### Operational Status
+
+```{r}
+#| label: operational-status
+ops <- x$operational_status |>
+  transmute(
+    Fund = team,
+    `Effective Matrix` = effective_matrix,
+    `Matrix Date` = matrix_date,
+    `Effective Date` = effective_date,
+    `Latest Attempt` = latest_attempt_status,
+    `Submission Message` = latest_attempt_message,
+    `Market Data` = market_data_status,
+    `Market Warning` = market_data_warning
+  )
+
+ops |>
+  gt(rowname_col = "Fund") |>
+  fmt_date(columns = c(`Matrix Date`, `Effective Date`), date_style = "iso") |>
+  sub_missing(columns = everything(), missing_text = "—") |>
+  tab_options(table.font.size = px(12))
+```
+
+### Prototype Validation Exceptions
+
+```{r}
+#| label: validation-exceptions
+exceptions <- x$validation_log |>
+  filter(!is_valid) |>
+  arrange(desc(matrix_date), desc(commit_time)) |>
+  transmute(
+    Fund = team,
+    `Matrix Date` = matrix_date,
+    Scenario = scenario,
+    Status = status,
+    Explanation = message
+  )
+
+exceptions |>
+  gt() |>
+  fmt_date(columns = `Matrix Date`, date_style = "iso") |>
+  tab_header(title = "Injected Prototype Edge Cases") |>
+  tab_options(table.font.size = px(12))
+```
+
+:::

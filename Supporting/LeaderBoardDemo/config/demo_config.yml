@@ -1,0 +1,46 @@
+# Standalone config for the teaching demo. Deliberately has no `production`
+# section and no real semester dates or team roster -- this file should never
+# need to change when the real competition's config
+# (Topics/LeaderBoard/config/teams.yml) changes.
+organization: MLFF-Fall2026-Demo
+
+# The demo's calculation engine reads cfg$trading for benchmark/ranking rules;
+# these values do not need to match the real semester's trading dates.
+trading:
+  start_date: 2025-09-22
+  end_date: 2025-12-03
+  timezone: America/New_York
+  submission_deadline: "17:00:00"
+  benchmark: IVV
+  turnover_penalty_lambda: 0.5
+  min_risk_observations: 10
+  trailing_4w_trading_days: 20
+  annualization_days: 252
+
+prototype:
+  enabled: true
+  seed: 490690
+  start_date: 2025-09-22
+  end_date: 2025-12-03
+  teams:
+    - team: NorthStarLong
+    - team: MarketNeutralLab
+    - team: LeveredMomentum
+    - team: DefensiveCarry
+    - team: ActiveRotation
+  universe:
+    - IVV
+    - SPY
+    - QQQ
+    - IWM
+    - XLK
+    - XLF
+    - XLE
+    - XLU
+    - AAPL
+    - MSFT
+    - NVDA
+    - JPM
+    - XOM
+    - JNJ
+    - COST

@@ -1,0 +1,278 @@
+---
+title: "Signal Evaluation Demo - Single Hold Out"
+subtitle: "Evaluating the efficacy of a Signal over a single hold out period "
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Background
+
+This file demonstrates how to use the function signal_evaluation_singleholdout, which is custom built for our class.
+
+For this demo we will simulate some trading data, use signal_evaluation_singleholdout to evaluate, and then interpret the performance stats.
+
+# Housekeeping
+
+```{r}
+#| echo: false
+#| warning: false
+
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "ProjectSetUp.R"))
+```
+
+# Data
+
+## Tickers
+
+
+Task: Set a seed for consistent randomization
+
+
+```{r}
+
+?(123)
+```
+
+
+Task: Create a vector of 300 ticker labels of the form A001, A002, ..., A300
+
+
+```{r}
+
+N <- ?
+tickers <- paste0("A", sprintf("%03d", 1:?))
+```
+
+## Signal
+
+
+Task: Generate a signal_matrix of length N from a N(0,1) distribution, representing the signal strength
+
+
+```{r}
+
+signal_matrix_vec <- ?(?, mean = ?, sd = ?)
+```
+
+
+
+Task: Create a signal_position vector based on the signal_matrix, assigning 1 for values above tau, -1 for values below -tau, and 0 otherwise. Let's set tau = 0.05 for now.
+
+
+```{r}
+
+  ? <- 0.05
+  signal_position_vec <- ifelse(signal_matrix_vec >  ?,  ?,
+                                ifelse(signal_matrix_vec < ?, ?, 0))
+```
+
+
+
+## Returns
+
+
+Task: Generate test period returns from a linear model loosely related to signal strength. ret = 0.01\*signal + N(0,0.05) noise
+
+
+```{r}
+
+  eps <- ?
+  ret_simple <- ?
+```
+
+
+## Combine
+
+
+Task: Format the signal_position and test_returns as data frames with ticker labels
+
+
+```{r}
+
+  signal_position <- data.frame(ticker = tickers, signal_position = signal_position_vec)
+  test_returns <- data.frame(ticker = tickers, test_returns = ret_simple)
+```
+
+
+
+Task: Format the meta data for labels
+
+
+```{r}
+
+  Meta <- list(assetname = "asset", benchmarkname = "market", signalname = "Momentum")
+```
+
+
+
+# Signal
+
+When you are implementing in practice, you likely won't be simulating the returns and signals as we did above. Instead, you'd be using observed data to generate those objects.
+
+Now that we have the data for the asset returns and signal generated, let's evalaute the signal.
+
+## Call to Signal Evaluator
+
+
+Task: Set the threshold for classification to .25%
+
+
+```{r}
+
+return_threshold <- ?
+```
+
+
+Q: What's the meaning of this return_threshold within our case?
+
+
+
+A: ?
+
+
+
+Task: Call the signal_evaluation_static function
+
+
+```{r}
+
+  SignalEval <- signal_evaluation_singleholdout(
+    ?
+  )
+```
+
+## Signal Evaluation
+
+In this subsection we will call selective components of the SignalEval object and interpret the efficacy of our signal.
+
+
+Task: Display the TradeResults and their accompanying percent table.
+
+
+```{r}
+ 
+SignalEval$?
+SignalEval$?
+```
+
+
+
+Q: Interpret the first row of the Percent table
+
+
+
+A:
+
+?
+
+
+
+Task: Display the return comparison table
+
+
+```{r}
+ 
+SignalEval$?
+```
+
+
+
+Q: Interpret the Long vs Short results
+
+
+
+A: ?
+
+
+
+Task: Display the violin plots of test returns by signal, outcome, and all combos
+
+
+```{r}
+
+SignalEval$plots$?
+SignalEval$plots$?
+SignalEval$plots$?
+```
+
+
+
+Task: Display summary table of sample stats
+
+
+```{r}
+
+SignalEval$?
+```
+
+
+
+Task: Display Info Coefficient
+
+
+```{r}
+
+SignalEval$?
+```
+
+
+
+Q: What does the IC all mean? Is it statistically significant?
+
+
+
+A:
+
+?
+
+
+
+Task: Display the Hit Rate
+
+
+```{r}
+
+SignalEval$?
+```
+
+
+
+Q: What does the Hit Rate mean? What does the p value and Coverage suggest?
+
+
+
+A:
+
+?
+
+
+
+Task: Display the confusion matrix
+
+
+```{r}
+
+SignalEval$?
+```
+
+
+
+Q: Interpret each of the metrics for Long positions
+
+
+
+A:
+
+?

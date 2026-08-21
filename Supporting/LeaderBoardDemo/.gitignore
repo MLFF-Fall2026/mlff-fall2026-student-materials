@@ -1,0 +1,5 @@
+data/*.rds
+data/*.csv
+data/submissions/
+data/submission_manifest.csv
+!data/.gitkeep
