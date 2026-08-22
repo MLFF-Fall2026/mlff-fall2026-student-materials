@@ -1,0 +1,2 @@
+market_snapshot_id,stage,batch_id,symbol_yahoo,status,message
+M_2026-08-22_105907,snapshot_quote,Q0001,2602335D,no_data,No requested quote field was returned.

@@ -1,0 +1,302 @@
+market_snapshot_id,symbol_yahoo,symbol_original,company,exchange,is_sp500,quote_success,historical_data_available,valid_trading_days,market_cap_quote,shares_outstanding_quote,market_cap_from_shares,quote_price,latest_close,analysis_exclusion_reason
+M_2026-08-22_105907,2602335D,2602335D,CONTRA HOLOGIC INCORPO,,TRUE,FALSE,FALSE,0,,,,,,No valid quote or historical-price data
+M_2026-08-22_105907,AAP,AAP,Advance Auto Parts Inc.,NYSE,FALSE,TRUE,TRUE,30,,,,42.58,42.58000183105469,Missing positive current market capitalization
+M_2026-08-22_105907,ABXL,ABXL,Abacus Global Management Inc. 9.875% Fixed Rate Senior Notes due 2028,NYSE,FALSE,TRUE,TRUE,30,,,,25.449,25.448999404907227,Missing positive current market capitalization
+M_2026-08-22_105907,ADAMG,ADAMG,Adamas Trust Inc. 9.125% Senior Notes Due 2030,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.24,25.239999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,ADAMH,ADAMH,Adamas Trust Inc. 9.875% Senior Notes Due 2030,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.48,25.479999542236328,Missing positive current market capitalization
+M_2026-08-22_105907,ADAMI,ADAMI,Adamas Trust Inc. 9.125% Senior Notes Due 2029,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.248,25.24799919128418,Missing positive current market capitalization
+M_2026-08-22_105907,ADAMK,ADAMK,Adamas Trust Inc. 9.600% Senior Notes Due 2031,NASDAQ,FALSE,TRUE,TRUE,5,,,,25.11,25.110000610351563,Missing positive current market capitalization
+M_2026-08-22_105907,ADAMO,ADAMO,Adamas Trust Inc. 9.250% Senior Notes Due 2031,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.0821,25.082000732421875,Missing positive current market capitalization
+M_2026-08-22_105907,ADI,ADI,Analog Devices Inc. Common Stock,NASDAQ,TRUE,TRUE,TRUE,30,,,,373.09,373.0899963378906,Missing positive current market capitalization
+M_2026-08-22_105907,AEFC,AEFC,Aegon Funding Company LLC 5.10% Subordinated Notes due 2049,NYSE,FALSE,TRUE,TRUE,30,,,,18.06,18.059999465942383,Missing positive current market capitalization
+M_2026-08-22_105907,AEO,AEO,American Eagle Outfitters Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,16.17,16.170000076293945,Missing positive current market capitalization
+M_2026-08-22_105907,AI,AI,C3.ai Inc. Class A Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,10.3,10.300000190734863,Missing positive current market capitalization
+M_2026-08-22_105907,AIB,AIB,AIB Data Centers Inc. Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,1.4,1.399999976158142,Missing positive current market capitalization
+M_2026-08-22_105907,AIZN,AIZN,Assurant Inc. 5.25% Subordinated Notes due 2061,NYSE,FALSE,TRUE,TRUE,30,,,,18.44,18.440000534057617,Missing positive current market capitalization
+M_2026-08-22_105907,AMC,AMC,AMC Entertainment Holdings Inc. Class A Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,2.55,2.549999952316284,Missing positive current market capitalization
+M_2026-08-22_105907,AMH,AMH,American Homes 4 Rent Common Shares of Beneficial Interest,NYSE,FALSE,TRUE,TRUE,30,,,,34.35,34.349998474121094,Missing positive current market capitalization
+M_2026-08-22_105907,AOMD,AOMD,Angel Oak Mortgage REIT Inc. 9.750% Senior Notes due 2030,NYSE,FALSE,TRUE,TRUE,30,,,,25.1,25.100000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,AOMN,AOMN,Angel Oak Mortgage REIT Inc. 9.500% Senior Notes due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,25.15,25.149999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,APOS,APOS,Apollo Global Management Inc. 7.625% Fixed-Rate Resettable Junior Subordinated Notes due 2053,NYSE,FALSE,TRUE,TRUE,30,,,,25.42,25.420000076293945,Missing positive current market capitalization
+M_2026-08-22_105907,AQNB,AQNB,Algonquin Power & Utilities Corp. 6.20% Fixed-to-Floating Subordinated Notes Series 2019-A due July 1 2079,NYSE,FALSE,TRUE,TRUE,30,,,,26.06,26.059999465942383,Missing positive current market capitalization
+M_2026-08-22_105907,ARL,ARL,American Realty Investors Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,15.21,15.210000038146973,Missing positive current market capitalization
+M_2026-08-22_105907,AS,AS,Amer Sports Inc. Ordinary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,32.63,32.630001068115234,Missing positive current market capitalization
+M_2026-08-22_105907,ASA,ASA,ASA Gold and Precious Metals Limited,NYSE,FALSE,TRUE,TRUE,30,,,,63.27,63.27000045776367,Missing positive current market capitalization
+M_2026-08-22_105907,ASBA,ASBA,Associated Banc-Corp 6.625% Fixed-Rate Reset Subordinated Notes due 2033,NYSE,FALSE,TRUE,TRUE,30,,,,24.73,24.729999542236328,Missing positive current market capitalization
+M_2026-08-22_105907,ASR,ASR,Grupo Aeroportuario del Sureste S.A. de C.V. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,262.58,262.5799865722656,Missing positive current market capitalization
+M_2026-08-22_105907,ASTI,ASTI,Ascent Solar Technologies Inc. Common Stock,NASDAQ,FALSE,TRUE,TRUE,30,,,,3.09,3.0899999141693115,Missing positive current market capitalization
+M_2026-08-22_105907,ATLCL,ATLCL,Atlanticus Holdings Corporation 6.125% Senior Notes due 2026,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.1201,25.1200008392334,Missing positive current market capitalization
+M_2026-08-22_105907,ATLCZ,ATLCZ,Atlanticus Holdings Corporation 9.25% Senior Notes due 2029,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.39,25.389999389648438,Missing positive current market capitalization
+M_2026-08-22_105907,AZO,AZO,AutoZone Inc. Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,2957.95,2957.949951171875,Missing positive current market capitalization
+M_2026-08-22_105907,BBW,BBW,Build-A-Bear Workshop Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,38.89,38.88999938964844,Missing positive current market capitalization
+M_2026-08-22_105907,BBY,BBY,Best Buy Co. Inc. Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,85.89,85.88999938964844,Missing positive current market capitalization
+M_2026-08-22_105907,BDL,BDL,Flanigan's Enterprises Inc. Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,48.12,48.119998931884766,Missing positive current market capitalization
+M_2026-08-22_105907,BEPH,BEPH,Brookfield BRP Holdings (Canada) Inc. 4.625% Perpetual Subordinated Notes,NYSE,FALSE,TRUE,TRUE,30,,,,15.1,15.100000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,BEPI,BEPI,Brookfield BRP Holdings (Canada) Inc. 4.875% Perpetual Subordinated Notes,NYSE,FALSE,TRUE,TRUE,30,,,,16.19,16.190000534057617,Missing positive current market capitalization
+M_2026-08-22_105907,BEPJ,BEPJ,Brookfield BRP Holdings (Canada) Inc. 7.250% Perpetual Subordinated Notes,NYSE,FALSE,TRUE,TRUE,30,,,,23.75,23.75,Missing positive current market capitalization
+M_2026-08-22_105907,BIPH,BIPH,Brookfield Infrastructure Corporation 5.000% Subordinated Notes due 2081,NYSE,FALSE,TRUE,TRUE,30,,,,15.9201,15.920000076293945,Missing positive current market capitalization
+M_2026-08-22_105907,BIPI,BIPI,BIP Bermuda Holdings I Limited 5.125% Perpetual Subordinated Notes,NYSE,FALSE,TRUE,TRUE,30,,,,16.72,16.719999313354492,Missing positive current market capitalization
+M_2026-08-22_105907,BIPJ,BIPJ,Brookfield Infrastructure Corporation 7.250% Subordinated Notes due 2084,NYSE,FALSE,TRUE,TRUE,30,,,,23.95,23.950000762939453,Missing positive current market capitalization
+M_2026-08-22_105907,BKE,BKE,Buckle Inc. (The) Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,43.81,43.810001373291016,Missing positive current market capitalization
+M_2026-08-22_105907,BLX,BLX,Bladex Inc. Class E Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,53.43,53.43000030517578,Missing positive current market capitalization
+M_2026-08-22_105907,BME,BME,Blackrock Health Sciences Trust,NYSE,FALSE,TRUE,TRUE,30,,,,46.13,46.130001068115234,Missing positive current market capitalization
+M_2026-08-22_105907,BNH,BNH,Brookfield Finance Inc. 4.625% Subordinated Notes due October 16 2080,NYSE,FALSE,TRUE,TRUE,30,,,,15.05,15.050000190734863,Missing positive current market capitalization
+M_2026-08-22_105907,BNJ,BNJ,Brookfield Finance Inc. 4.50% Perpetual Subordinated Notes,NYSE,FALSE,TRUE,TRUE,30,,,,15.07,15.069999694824219,Missing positive current market capitalization
+M_2026-08-22_105907,BOE,BOE,Blackrock Enhanced Global Dividend Trust Common Shares of Beneficial Interest,NYSE,FALSE,TRUE,TRUE,30,,,,12.4,12.399999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,BOX,BOX,Box Inc. Class A Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,32.91,32.90999984741211,Missing positive current market capitalization
+M_2026-08-22_105907,BRC,BRC,Brady Corporation Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,91.29,91.29000091552734,Missing positive current market capitalization
+M_2026-08-22_105907,BST,BST,BlackRock Science and Technology Trust Common Shares of Beneficial Interest,NYSE,FALSE,TRUE,TRUE,30,,,,49.57,49.56999969482422,Missing positive current market capitalization
+M_2026-08-22_105907,BTLN,BTLN,Brightline Interactive Inc. Common Stock,NASDAQ,FALSE,TRUE,TRUE,1,,,,1.07,1.0700000524520874,Missing positive current market capitalization
+M_2026-08-22_105907,BUI,BUI,BlackRock Utility Infrastructure & Power Opportunities Trust,NYSE,FALSE,TRUE,TRUE,30,,,,27,27,Missing positive current market capitalization
+M_2026-08-22_105907,BVN,BVN,Buenaventura Mining Company Inc.,NYSE,FALSE,TRUE,TRUE,30,,,,35.47,35.470001220703125,Missing positive current market capitalization
+M_2026-08-22_105907,CCU,CCU,Compania Cervecerias Unidas S.A. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,12.34,12.34000015258789,Missing positive current market capitalization
+M_2026-08-22_105907,CCZ,CCZ,Comcast Holdings ZONES,NYSE,FALSE,TRUE,TRUE,30,,,,66.4499,66.44999694824219,Missing positive current market capitalization
+M_2026-08-22_105907,CDZIP,CDZIP,Cadiz Inc. Depositary Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,22.2891,22.288999557495117,Missing positive current market capitalization
+M_2026-08-22_105907,CET,CET,Central Securities Corporation Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,54.77,54.77000045776367,Missing positive current market capitalization
+M_2026-08-22_105907,CGABL,CGABL,The Carlyle Group Inc. 4.625% Subordinated Notes due 2061,NASDAQ,FALSE,TRUE,TRUE,30,,,,16.08,16.079999923706055,Missing positive current market capitalization
+M_2026-08-22_105907,CICB,CICB,CION Investment Corporation 7.50% Notes due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,25.09,25.09000015258789,Missing positive current market capitalization
+M_2026-08-22_105907,CICC,CICC,CION Investment Corporation 7.50% Notes due 2031,NYSE,FALSE,TRUE,TRUE,30,,,,24.94,24.940000534057617,Missing positive current market capitalization
+M_2026-08-22_105907,CIG,CIG,Comp En De Mn Cemig ADS American Depositary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,1.92,1.9199999570846558,Missing positive current market capitalization
+M_2026-08-22_105907,CIMN,CIMN,Chimera Investment Corporation 9.000% Senior Notes due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,25.1797,25.18000030517578,Missing positive current market capitalization
+M_2026-08-22_105907,CIMO,CIMO,Chimera Investment Corporation 9.250% Senior Notes due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,25.33,25.329999923706055,Missing positive current market capitalization
+M_2026-08-22_105907,CIMP,CIMP,Chimera Investment Corporation 8.875% Senior Notes due 2030,NYSE,FALSE,TRUE,TRUE,30,,,,25.05,25.049999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,CMC,CMC,Commercial Metals Company Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,66.31,66.30999755859375,Missing positive current market capitalization
+M_2026-08-22_105907,CMSC,CMSC,CMS Energy Corporation 5.875% Junior Subordinated Notes due 2078,NYSE,FALSE,TRUE,TRUE,30,,,,21.1016,21.100000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,CMSD,CMSD,CMS Energy Corporation 5.875% Junior Subordinated Notes due 2079,NYSE,FALSE,TRUE,TRUE,30,,,,20.98,20.979999542236328,Missing positive current market capitalization
+M_2026-08-22_105907,COO,COO,The Cooper Companies Inc. Common Stock,NASDAQ,TRUE,TRUE,TRUE,30,,,,76.22,76.220001220703125,Missing positive current market capitalization
+M_2026-08-22_105907,CPB,CPB,The Campbell's Company Common Stock,NASDAQ,FALSE,TRUE,TRUE,30,,,,23.95,23.950000762939453,Missing positive current market capitalization
+M_2026-08-22_105907,CRBD,CRBD,Corebridge Financial Inc. 6.375% Junior Subordinated Notes due 2064,NYSE,FALSE,TRUE,TRUE,30,,,,22,22,Missing positive current market capitalization
+M_2026-08-22_105907,CRM,CRM,Salesforce Inc. Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,209.17,209.1699981689453,Missing positive current market capitalization
+M_2026-08-22_105907,CTGG,CTGG,Qwest Corporation 6.500% Senior Notes due 2051 (denominations of $25),NYSE,FALSE,TRUE,TRUE,30,,,,16.24,16.239999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,CTHH,CTHH,Qwest Corporation 6.750% Senior Notes due 2052 (denominations of $25),NYSE,FALSE,TRUE,TRUE,30,,,,16.95,16.950000762939453,Missing positive current market capitalization
+M_2026-08-22_105907,CUBB,CUBB,Customers Bancorp Inc 5.375% Subordinated Notes Due 2034,NYSE,FALSE,TRUE,TRUE,30,,,,22.15,22.149999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,CX,CX,Cemex S.A.B. de C.V. Sponsored ADR,NYSE,FALSE,TRUE,TRUE,30,,,,11.11,11.109999656677246,Missing positive current market capitalization
+M_2026-08-22_105907,CXM,CXM,Sprinklr Inc. Class A Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,7.4,7.400000095367432,Missing positive current market capitalization
+M_2026-08-22_105907,CYD,CYD,China Yuchai International Limited Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,39.88,39.880001068115234,Missing positive current market capitalization
+M_2026-08-22_105907,CYN,CYN,Cyngn Inc. Common Stock,NASDAQ,FALSE,TRUE,TRUE,30,,,,1.09,1.090000033378601,Missing positive current market capitalization
+M_2026-08-22_105907,DAC,DAC,Danaos Corporation Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,149.75,149.75,Missing positive current market capitalization
+M_2026-08-22_105907,DAL,DAL,Delta Air Lines Inc. Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,82.41,82.410003662109375,Missing positive current market capitalization
+M_2026-08-22_105907,DCBG,DCBG,Dime Commercial Bancshares Inc. 9.000% Junior Subordinated Notes,NYSE,FALSE,TRUE,TRUE,30,,,,26.2993,26.298999786376953,Missing positive current market capitalization
+M_2026-08-22_105907,DCI,DCI,Donaldson Company Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,93.25,93.25,Missing positive current market capitalization
+M_2026-08-22_105907,DDS,DDS,Dillard's Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,621.63,621.6300048828125,Missing positive current market capitalization
+M_2026-08-22_105907,DDT,DDT,Dillard's Capital Trust I,NYSE,FALSE,TRUE,TRUE,30,,,,26.36,26.360000610351563,Missing positive current market capitalization
+M_2026-08-22_105907,DHCNI,DHCNI,Diversified Healthcare Trust 5.625% Senior Notes due 2042,NASDAQ,FALSE,TRUE,TRUE,30,,,,18.64,18.639999389648438,Missing positive current market capitalization
+M_2026-08-22_105907,DHCNL,DHCNL,Diversified Healthcare Trust 6.25% Senior Notes Due 2046,NASDAQ,FALSE,TRUE,TRUE,1,,,,18.9,18.899999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,DIT,DIT,AMCON Distributing Company Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,70.76,70.76000213623047,Missing positive current market capitalization
+M_2026-08-22_105907,DPU,DPU,Top KingWin Ltd Class A Ordinary Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,2.3,2.299999952316284,Missing positive current market capitalization
+M_2026-08-22_105907,DRD,DRD,DRDGOLD Limited American Depositary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,30.7,30.700000762939453,Missing positive current market capitalization
+M_2026-08-22_105907,DSS,DSS,DSS Inc. Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,0.54,0.5400000214576721,Missing positive current market capitalization
+M_2026-08-22_105907,DY,DY,Dycom Industries Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,392.95,392.95001220703125,Missing positive current market capitalization
+M_2026-08-22_105907,EBF,EBF,Ennis Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,21.57,21.56999969482422,Missing positive current market capitalization
+M_2026-08-22_105907,ECCU,ECCU,Eagle Point Credit Company 7.75% Notes due 2030,NYSE,FALSE,TRUE,TRUE,30,,,,25.4201,25.420000076293945,Missing positive current market capitalization
+M_2026-08-22_105907,ECCV,ECCV,Eagle Point Credit Company 5.375% Notes due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,24.21,24.209999084472656,Missing positive current market capitalization
+M_2026-08-22_105907,EDN,EDN,Empresa Distribuidora Y Comercializadora Norte S.A. (Edenor) American Depositary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,22.3,22.299999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,EDU,EDU,New Oriental Education & Technology Group Inc. Sponsored ADR representing 10 Ordinary Share (Cayman Islands),NYSE,FALSE,TRUE,TRUE,30,,,,55.8,55.79999923706055,Missing positive current market capitalization
+M_2026-08-22_105907,EL,EL,Estee Lauder Companies Inc. (The) Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,101.94,101.94000244140625,Missing positive current market capitalization
+M_2026-08-22_105907,ELLA,ELLA,Ellington Credit Company 8.50% Notes due 2031,NYSE,FALSE,TRUE,TRUE,30,,,,25.318,25.31999969482422,Missing positive current market capitalization
+M_2026-08-22_105907,ESP,ESP,Espey Mfg. & Electronics Corp. Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,64.78,64.779998779296875,Missing positive current market capitalization
+M_2026-08-22_105907,FC,FC,Franklin Covey Company Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,20.29,20.290000915527344,Missing positive current market capitalization
+M_2026-08-22_105907,FCNCP,FCNCP,First Citizens BancShares Inc. Depositary Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,19.67,19.670000076293945,Missing positive current market capitalization
+M_2026-08-22_105907,FGN,FGN,F&G Annuities & Life Inc. 7.950% Senior Notes due 2053,NYSE,FALSE,TRUE,TRUE,30,,,,24.55,24.549999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,FGSN,FGSN,F&G Annuities & Life Inc. 7.300% Junior Subordinated Notes due 2065,NYSE,FALSE,TRUE,TRUE,30,,,,20.72,20.719999313354492,Missing positive current market capitalization
+M_2026-08-22_105907,FRMEP,FRMEP,First Merchants Corporation Depository Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.25,25.25,Missing positive current market capitalization
+M_2026-08-22_105907,FT,FT,Franklin Universal Trust Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,7.82,7.820000171661377,Missing positive current market capitalization
+M_2026-08-22_105907,FTRA,FTRA,FutureCorp Space Acquisition 1 Class A Ordinary Shares,NYSE,FALSE,TRUE,TRUE,20,,,,9.89,9.890000343322754,Missing positive current market capitalization
+M_2026-08-22_105907,GAB,GAB,Gabelli Equity Trust Inc. (The) Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,5.65,5.650000095367432,Missing positive current market capitalization
+M_2026-08-22_105907,GAIN,GAIN,Gladstone Investment Corporation Business Development Company,NASDAQ,FALSE,TRUE,TRUE,30,,,,16.36,16.360000610351563,Missing positive current market capitalization
+M_2026-08-22_105907,GAING,GAING,Gladstone Investment Corporation 7.125% Notes due 2031,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.18,25.18000030517578,Missing positive current market capitalization
+M_2026-08-22_105907,GAINI,GAINI,Gladstone Investment Corporation 7.875% Notes due 2030,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.5,25.5,Missing positive current market capitalization
+M_2026-08-22_105907,GAINZ,GAINZ,Gladstone Investment Corporation 4.875% Notes due 2028,NASDAQ,FALSE,TRUE,TRUE,30,,,,24.21,24.209999084472656,Missing positive current market capitalization
+M_2026-08-22_105907,GAP,GAP,Gap Inc. (The) Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,19.8,19.799999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,GECCG,GECCG,Great Elm Capital Corp. 7.75% Notes Due 2030,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.01,25.010000228881836,Missing positive current market capitalization
+M_2026-08-22_105907,GECCH,GECCH,Great Elm Capital Corp. 8.125% Notes Due 2029,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.135,25.135000228881836,Missing positive current market capitalization
+M_2026-08-22_105907,GECCI,GECCI,Great Elm Capital Corp. 8.50% NOTES DUE 2029,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.38,25.3799991607666,Missing positive current market capitalization
+M_2026-08-22_105907,GEGGL,GEGGL,Great Elm Group Inc. 7.25% Notes due 2027,NASDAQ,FALSE,TRUE,TRUE,30,,,,24.7525,24.753000259399414,Missing positive current market capitalization
+M_2026-08-22_105907,GFI,GFI,Gold Fields Limited American Depositary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,47.81,47.810001373291016,Missing positive current market capitalization
+M_2026-08-22_105907,GGZ,GGZ,Gabelli Global Small and Mid Cap Value Trust (The) Common Shares of Beneficial Interest,NYSE,FALSE,TRUE,TRUE,30,,,,16.51,16.510000228881836,Missing positive current market capitalization
+M_2026-08-22_105907,GJH,GJH,Synthetic Fixed-Income Securities Inc 6.375% (STRATS) Cl A-1,NYSE,FALSE,TRUE,TRUE,30,,,,9.45,9.449999809265137,Missing positive current market capitalization
+M_2026-08-22_105907,GJO,GJO,Synthetic Fixed-Income Securities Inc. on behalf of STRATS(SM) Trust for Wal-Mart Stores Inc. Securities Series 2004-5,NYSE,FALSE,TRUE,TRUE,30,,,,24.5,24.5,Missing positive current market capitalization
+M_2026-08-22_105907,GJR,GJR,Synthetic Fixed-Income Securities Inc. STRATS Trust for Procter&Gamble Securities Series 2006-1,NYSE,FALSE,TRUE,TRUE,30,,,,24.63,24.6299991607666,Missing positive current market capitalization
+M_2026-08-22_105907,GJS,GJS,Goldman Sachs Group Securities STRATS Trust for Goldman Sachs Group Securities Series 2006-2,NYSE,FALSE,TRUE,TRUE,30,,,,23.47,23.469999313354492,Missing positive current market capitalization
+M_2026-08-22_105907,GLU,GLU,Gabelli Global Utility Common Shares of Beneficial Ownership,AMEX,FALSE,TRUE,TRUE,30,,,,19.35,19.350000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,GREEL,GREEL,Vulcan Infrastructure and Power Inc. 8.50% Senior Notes due 2026,NASDAQ,FALSE,TRUE,TRUE,30,,,,24.69,24.690000534057617,Missing positive current market capitalization
+M_2026-08-22_105907,GRX,GRX,The Gabelli Healthcare & Wellness Trust Common Shares of Beneficial Interest,NYSE,FALSE,TRUE,TRUE,30,,,,10.14,10.140000343322754,Missing positive current market capitalization
+M_2026-08-22_105907,GSL,GSL,Global Ship Lease Inc New Class A Common Shares,NYSE,FALSE,TRUE,TRUE,30,,,,43.83,43.83000183105469,Missing positive current market capitalization
+M_2026-08-22_105907,GSM,GSM,Ferroglobe PLC Ordinary Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,4.08,4.079999923706055,Missing positive current market capitalization
+M_2026-08-22_105907,GUT,GUT,Gabelli Utility Trust (The) Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,6.53,6.53000020980835,Missing positive current market capitalization
+M_2026-08-22_105907,HD,HD,Home Depot Inc. (The) Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,335.61,335.6099853515625,Missing positive current market capitalization
+M_2026-08-22_105907,HEI,HEI,Heico Corporation Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,355.04,355.0400085449219,Missing positive current market capitalization
+M_2026-08-22_105907,HLX,HLX,Helix Energy Solutions Group Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,10.35,10.350000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,HMY,HMY,Harmony Gold Mining Company Limited,NYSE,FALSE,TRUE,TRUE,30,,,,23.54,23.540000915527344,Missing positive current market capitalization
+M_2026-08-22_105907,HPQ,HPQ,HP Inc. Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,29.71,29.709999084472656,Missing positive current market capitalization
+M_2026-08-22_105907,HQH,HQH,abrdn Healthcare Investors Shares of Beneficial Interest,NYSE,FALSE,TRUE,TRUE,30,,,,24.39,24.389999389648438,Missing positive current market capitalization
+M_2026-08-22_105907,HQL,HQL,abrdn Life Sciences Investors Shares of Beneficial Interest,NYSE,FALSE,TRUE,TRUE,30,,,,22.38,22.3799991607666,Missing positive current market capitalization
+M_2026-08-22_105907,HRL,HRL,Hormel Foods Corporation Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,23.88,23.8799991607666,Missing positive current market capitalization
+M_2026-08-22_105907,HTFC,HTFC,Horizon Technology Finance Corporation 6.25% Notes due 2027,NYSE,FALSE,TRUE,TRUE,30,,,,24.97,24.969999313354492,Missing positive current market capitalization
+M_2026-08-22_105907,HWCPZ,HWCPZ,Hancock Whitney Corporation 6.25% Subordinated Notes due 2060,NASDAQ,FALSE,TRUE,TRUE,30,,,,22.17,22.170000076293945,Missing positive current market capitalization
+M_2026-08-22_105907,IBN,IBN,ICICI Bank Limited Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,29.91,29.90999984741211,Missing positive current market capitalization
+M_2026-08-22_105907,ICL,ICL,ICL Group Ltd. Ordinary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,5.8,5.800000190734863,Missing positive current market capitalization
+M_2026-08-22_105907,IDT,IDT,IDT Corporation Class B Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,67.92,67.91999816894531,Missing positive current market capitalization
+M_2026-08-22_105907,IHT,IHT,InnSuites Hospitality Trust Shares of Beneficial Interest,AMEX,FALSE,TRUE,TRUE,30,,,,1.51,1.5099999904632568,Missing positive current market capitalization
+M_2026-08-22_105907,IMO,IMO,Imperial Oil Limited Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,138.05,138.0500030517578,Missing positive current market capitalization
+M_2026-08-22_105907,INBKZ,INBKZ,First Internet Bancorp 6.0% Fixed-to-Floating Rate Subordinated Notes Due 2029,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.2784,25.277999877929688,Missing positive current market capitalization
+M_2026-08-22_105907,IOT,IOT,Samsara Inc. Class A Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,39.94,39.939998626708984,Missing positive current market capitalization
+M_2026-08-22_105907,ITT,ITT,ITT Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,208.1,208.10000610351563,Missing positive current market capitalization
+M_2026-08-22_105907,JBK,JBK,Lehman ABS 3.50 3.50% Adjustable Corp Backed Tr Certs GS Cap I,NYSE,FALSE,TRUE,TRUE,30,,,,25.8,25.799999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,JD,JD,JD.com Inc. American Depositary Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,29.37,29.3700008392334,Missing positive current market capitalization
+M_2026-08-22_105907,JHI,JHI,John Hancock Investors Trust Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,13.21,13.210000038146973,Missing positive current market capitalization
+M_2026-08-22_105907,KBH,KBH,KB Home Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,55.37,55.369998931884766,Missing positive current market capitalization
+M_2026-08-22_105907,KEN,KEN,Kenon Holdings Ltd. Ordinary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,66.25,66.25,Missing positive current market capitalization
+M_2026-08-22_105907,KKRS,KKRS,KKR Group Finance Co. IX LLC 4.625% Subordinated Notes due 2061,NYSE,FALSE,TRUE,TRUE,30,,,,16.0573,16.05699920654297,Missing positive current market capitalization
+M_2026-08-22_105907,KKRT,KKRT,KKR & Co. Inc. 6.875% Subordinated Notes due 2065,NYSE,FALSE,TRUE,TRUE,30,,,,23,23,Missing positive current market capitalization
+M_2026-08-22_105907,KMX,KMX,CarMax Inc,NYSE,FALSE,TRUE,TRUE,30,,,,62.13,62.130001068115234,Missing positive current market capitalization
+M_2026-08-22_105907,KOF,KOF,Coca Cola Femsa S.A.B. de C.V. American Depositary Shares each representing 10 Units (each Unit consists of 3 Series B Shares and 5 Series L Shares),NYSE,FALSE,TRUE,TRUE,30,,,,112.19,112.19000244140625,Missing positive current market capitalization
+M_2026-08-22_105907,KR,KR,Kroger Company (The) Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,57.9,57.900001525878906,Missing positive current market capitalization
+M_2026-08-22_105907,KSS,KSS,Kohl's Corporation Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,17.6,17.600000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,KTN,KTN,Structured Products Corp 8.205% CorTS 8.205% Corporate Backed Trust Securities (CorTS),NYSE,FALSE,TRUE,TRUE,30,,,,25.49,25.489999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,LND,LND,Brasilagro Brazilian Agric Real Estate Co Sponsored ADR (Brazil),NYSE,FALSE,TRUE,TRUE,30,,,,3.77,3.7699999809265137,Missing positive current market capitalization
+M_2026-08-22_105907,LOW,LOW,Lowe's Companies Inc. Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,216.09,216.08999633789063,Missing positive current market capitalization
+M_2026-08-22_105907,LTM,LTM,LATAM Airlines Group S.A. American Depositary Shares (each representing two thousand (2000) shares of Common Stock),NYSE,FALSE,TRUE,TRUE,30,,,,51.55,51.54999923706055,Missing positive current market capitalization
+M_2026-08-22_105907,MANU,MANU,Manchester United Ltd. Class A Ordinary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,23.75,23.75,Missing positive current market capitalization
+M_2026-08-22_105907,MCY,MCY,Mercury General Corporation Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,105.7,105.69999694824219,Missing positive current market capitalization
+M_2026-08-22_105907,METCI,METCI,Ramaco Resources Inc. 8.250% Senior Notes due 2030,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.325,25.325000762939453,Missing positive current market capitalization
+M_2026-08-22_105907,METCZ,METCZ,Ramaco Resources Inc. 8.375% Senior Notes due 2029,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.38,25.3799991607666,Missing positive current market capitalization
+M_2026-08-22_105907,MFAN,MFAN,MFA Financial Inc. 8.875% Senior Notes due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,25.21,25.209999084472656,Missing positive current market capitalization
+M_2026-08-22_105907,MFAO,MFAO,MFA Financial Inc. 9.000% Senior Notes due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,25.23,25.229999542236328,Missing positive current market capitalization
+M_2026-08-22_105907,MFICL,MFICL,MidCap Financial Investment Corporation 8.00% Notes due 2028,NASDAQ,FALSE,TRUE,TRUE,1,,,,25.5,25.5,Missing positive current market capitalization
+M_2026-08-22_105907,MGR,MGR,Affiliated Managers Group Inc. 5.875% Junior Subordinated Notes due 2059,NYSE,FALSE,TRUE,TRUE,30,,,,19.6703,19.670000076293945,Missing positive current market capitalization
+M_2026-08-22_105907,MGRB,MGRB,Affiliated Managers Group Inc. 4.750% Junior Subordinated Notes due 2060,NYSE,FALSE,TRUE,TRUE,30,,,,16.17,16.170000076293945,Missing positive current market capitalization
+M_2026-08-22_105907,MGRD,MGRD,Affiliated Managers Group Inc. 4.200% Junior Subordinated Notes due 2061,NYSE,FALSE,TRUE,TRUE,30,,,,14.65,14.649999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,MGRE,MGRE,Affiliated Managers Group Inc. 6.750% Junior Subordinated Notes due 2064,NYSE,FALSE,TRUE,TRUE,30,,,,22.395,22.395000457763672,Missing positive current market capitalization
+M_2026-08-22_105907,MHNC,MHNC,Maiden Holdings North America Ltd. 7.75% Notes due 2043,NYSE,FALSE,TRUE,TRUE,30,,,,11.78,11.779999732971191,Missing positive current market capitalization
+M_2026-08-22_105907,MLCIL,MLCIL,Mount Logan Capital Inc. 8.00% Notes Due 2031,NASDAQ,FALSE,TRUE,TRUE,30,,,,22.55,22.549999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,MNSBP,MNSBP,MainStreet Bancshares Inc. Depositary Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,26.5,26.200000762939453,Missing positive current market capitalization
+M_2026-08-22_105907,MOV,MOV,Movado Group Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,34.81,34.810001373291016,Missing positive current market capitalization
+M_2026-08-22_105907,MRX,MRX,Marex Group Limited Ordinary Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,72.99,72.98999786376953,Missing positive current market capitalization
+M_2026-08-22_105907,MSB,MSB,Mesabi Trust Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,22.77,22.770000457763672,Missing positive current market capitalization
+M_2026-08-22_105907,MSM,MSM,MSC Industrial Direct Company Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,119.81,119.80999755859375,Missing positive current market capitalization
+M_2026-08-22_105907,MU,MU,Micron Technology Inc. Common Stock,NASDAQ,TRUE,TRUE,TRUE,30,,,,966.78,966.780029296875,Missing positive current market capitalization
+M_2026-08-22_105907,MWG,MWG,Multi Ways Holdings Limited Class A Ordinary Shares,AMEX,FALSE,TRUE,TRUE,30,,,,1.26,1.2599999904632568,Missing positive current market capitalization
+M_2026-08-22_105907,MXC,MXC,Mexco Energy Corporation Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,9.49,9.489999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,NAT,NAT,Nordic American Tankers Limited Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,6.97,6.96999979019165,Missing positive current market capitalization
+M_2026-08-22_105907,NBN,NBN,Northeast Bank Common Stock,NASDAQ,FALSE,TRUE,TRUE,30,,,,130.5,130.5,Missing positive current market capitalization
+M_2026-08-22_105907,NCT,NCT,Intercont (Cayman) Limited Class A Ordinary shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,4.12,4.119999885559082,Missing positive current market capitalization
+M_2026-08-22_105907,NEWTG,NEWTG,NewtekOne Inc. 8.50% Fixed Rate Senior Notes due 2029,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.6401,25.639999389648438,Missing positive current market capitalization
+M_2026-08-22_105907,NEWTH,NEWTH,NewtekOne Inc. 8.625% Fixed Rate Senior Notes due 2029,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.35,25.350000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,NEWTI,NEWTI,NewtekOne Inc. 8.00% Fixed Rate Senior Notes due 2028,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.59,25.59000015258789,Missing positive current market capitalization
+M_2026-08-22_105907,NEWTO,NEWTO,NewtekOne Inc. 8.50% Fixed Rate Senior Notes due 2031,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.52,25.520000457763672,Missing positive current market capitalization
+M_2026-08-22_105907,NIO,NIO,NIO Inc. American depositary shares each representing one Class A ordinary share,NYSE,FALSE,TRUE,TRUE,30,,,,4.63,4.630000114440918,Missing positive current market capitalization
+M_2026-08-22_105907,NL,NL,NLI Holdings Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,6.47,6.46999979019165,Missing positive current market capitalization
+M_2026-08-22_105907,NMFCZ,NMFCZ,New Mountain Finance Corporation 8.250% Notes due 2028,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.205,25.204999923706055,Missing positive current market capitalization
+M_2026-08-22_105907,NOK,NOK,Nokia Corporation Sponsored American Depositary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,10.21,10.210000038146973,Missing positive current market capitalization
+M_2026-08-22_105907,NOMD,NOMD,Nomad Foods Limited Ordinary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,11.81,11.8100004196167,Missing positive current market capitalization
+M_2026-08-22_105907,NRP,NRP,Natural Resource Partners LP Limited Partnership,NYSE,FALSE,TRUE,TRUE,30,,,,105.39,105.38999938964844,Missing positive current market capitalization
+M_2026-08-22_105907,NRUC,NRUC,National Rural Utilities Cooperative Finance Corporation 5.500% Subordinated Notes due 2064 (Subordinated Deferrable Interest Notes),NYSE,FALSE,TRUE,TRUE,30,,,,21.4,21.399999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,NSLRL,NSLRL,Neostellar Capital Corp. 6.00% Notes due 2026,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.22,25.219999313354492,Missing positive current market capitalization
+M_2026-08-22_105907,ODC,ODC,Oil-Dri Corporation Of America Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,89.94,89.94000244140625,Missing positive current market capitalization
+M_2026-08-22_105907,OFSSH,OFSSH,OFS Capital Corporation 4.95% Notes due 2028,NASDAQ,FALSE,TRUE,TRUE,30,,,,23.7999,23.799999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,OLN,OLN,Olin Corporation Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,18.4,18.399999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,OXLCG,OXLCG,Oxford Lane Capital Corp. 7.95% Notes due 2032,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.16,25.15999984741211,Missing positive current market capitalization
+M_2026-08-22_105907,OXLCI,OXLCI,Oxford Lane Capital Corp. 8.75% Notes due 2030,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.71,25.709999084472656,Missing positive current market capitalization
+M_2026-08-22_105907,OXLCL,OXLCL,Oxford Lane Capital Corp. 6.75% Notes due 2031,NASDAQ,FALSE,TRUE,TRUE,30,,,,24.275,24.274999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,OXLCZ,OXLCZ,Oxford Lane Capital Corp. 5.00% Notes due 2027,NASDAQ,FALSE,TRUE,TRUE,30,,,,24.98,24.979999542236328,Missing positive current market capitalization
+M_2026-08-22_105907,OXSQG,OXSQG,Oxford Square Capital Corp. 5.50% Notes due 2028,NASDAQ,FALSE,TRUE,TRUE,30,,,,24.05,24.049999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,OXSQH,OXSQH,Oxford Square Capital Corp. 7.75% Notes due 2030,NASDAQ,FALSE,TRUE,TRUE,30,,,,24.96,24.959999084472656,Missing positive current market capitalization
+M_2026-08-22_105907,P,P,Everpure Inc. Class A common stock,NYSE,FALSE,TRUE,TRUE,30,,,,108.55,108.55000305175781,Missing positive current market capitalization
+M_2026-08-22_105907,PBM,PBM,Psyence Biomedical Ltd. Common Shares,NASDAQ,FALSE,TRUE,FALSE,0,,,,4.33,,Missing positive current market capitalization
+M_2026-08-22_105907,PED,PED,Pedevco Corp. Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,13.81,13.8100004196167,Missing positive current market capitalization
+M_2026-08-22_105907,PFH,PFH,Prudential Financial Inc. 4.125% Junior Subordinated Notes due 2060,NYSE,FALSE,TRUE,TRUE,30,,,,15.3,15.300000190734863,Missing positive current market capitalization
+M_2026-08-22_105907,PFLA,PFLA,PennantPark Floating Rate Capital Ltd. 7.375% Notes Due 2031,NYSE,FALSE,TRUE,TRUE,30,,,,25.1502,25.149999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,PFXNZ,PFXNZ,PhenixFIN Corporation 5.25% Notes due 2028,NASDAQ,FALSE,TRUE,TRUE,30,,,,23.97,23.969999313354492,Missing positive current market capitalization
+M_2026-08-22_105907,PHI,PHI,PLDT Inc. Sponsored ADR,NYSE,FALSE,TRUE,TRUE,30,,,,19.38,19.3799991607666,Missing positive current market capitalization
+M_2026-08-22_105907,PHM,PHM,PulteGroup Inc. Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,129,129,Missing positive current market capitalization
+M_2026-08-22_105907,PLG,PLG,Platinum Group Metals Ltd. Ordinary Shares (Canada),AMEX,FALSE,TRUE,TRUE,30,,,,1.64,1.6399999856948853,Missing positive current market capitalization
+M_2026-08-22_105907,PMO,PMO,Franklin Municipal Opportunities Trust Shares of Beneficial Interest,NYSE,FALSE,TRUE,TRUE,30,,,,10.3,10.300000190734863,Missing positive current market capitalization
+M_2026-08-22_105907,POM,POM,POMDOCTOR LIMITED American Depositary Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,0.9501,0.949999988079071,Missing positive current market capitalization
+M_2026-08-22_105907,PRH,PRH,Prudential Financial Inc. 5.950% Junior Subordinated Notes due 2062,NYSE,FALSE,TRUE,TRUE,30,,,,21.37,21.3700008392334,Missing positive current market capitalization
+M_2026-08-22_105907,PRHIZ,PRHIZ,Presurance Holdings Inc. 9.75% Senior Unsecured Notes due 2028,NASDAQ,FALSE,TRUE,TRUE,27,,,,19.07,19.06999969482422,Missing positive current market capitalization
+M_2026-08-22_105907,PRS,PRS,Prudential Financial Inc. 5.625% Junior Subordinated Notes due 2058,NYSE,FALSE,TRUE,TRUE,30,,,,20.47,20.469999313354492,Missing positive current market capitalization
+M_2026-08-22_105907,PSUS,PSUS,Pershing Square USA Ltd. Common Shares,NYSE,FALSE,TRUE,TRUE,30,,,,39.68,39.68000030517578,Missing positive current market capitalization
+M_2026-08-22_105907,PVH,PVH,PVH Corp. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,78.5,78.5,Missing positive current market capitalization
+M_2026-08-22_105907,PYT,PYT,PPlus Tr GSC-2 Tr Ctf Fltg Rate,NYSE,FALSE,TRUE,TRUE,30,,,,23.47,23.469999313354492,Missing positive current market capitalization
+M_2026-08-22_105907,PZG,PZG,Paramount Gold Nevada Corp. Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,1.53,1.5299999713897705,Missing positive current market capitalization
+M_2026-08-22_105907,QVCG,QVCG,QVC Group Inc. Common Stock,NASDAQ,FALSE,TRUE,TRUE,10,,,,15.5,15.5,Missing positive current market capitalization
+M_2026-08-22_105907,RCD,RCD,Ready Capital Corporation 9.00% Senior Notes due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,23.665,23.665000915527344,Missing positive current market capitalization
+M_2026-08-22_105907,RGC,RGC,Regencell Bioscience Holdings Limited Ordinary Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,5.3,5.300000190734863,Missing positive current market capitalization
+M_2026-08-22_105907,RGS,RGS,Regis Corporation Common Stock,NASDAQ,FALSE,TRUE,TRUE,30,,,,26.7901,26.790000915527344,Missing positive current market capitalization
+M_2026-08-22_105907,RILYG,RILYG,BRC Group Holdings Inc. 5.00% Senior Notes due 2026,NASDAQ,FALSE,TRUE,TRUE,30,,,,24.55,24.549999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,RILYN,RILYN,BRC Group Holdings Inc. 6.50% Senior Notes Due 2026,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.035,25.03499984741211,Missing positive current market capitalization
+M_2026-08-22_105907,RILYT,RILYT,BRC Group Holdings Inc. 6.00% Senior Notes Due 2028,NASDAQ,FALSE,TRUE,TRUE,30,,,,21.5201,21.520000457763672,Missing positive current market capitalization
+M_2026-08-22_105907,RILYZ,RILYZ,BRC Group Holdings Inc. 5.25% Senior Notes due 2028,NASDAQ,FALSE,TRUE,TRUE,30,,,,19.74,19.739999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,RWAYI,RWAYI,Runway Growth Finance Corp. 7.25% Notes due 2031,NASDAQ,FALSE,TRUE,TRUE,30,,,,24.56,24.559999465942383,Missing positive current market capitalization
+M_2026-08-22_105907,RWAYL,RWAYL,Runway Growth Finance Corp. 7.50% Notes due 2027,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.1362,25.13599967956543,Missing positive current market capitalization
+M_2026-08-22_105907,RWTN,RWTN,Redwood Trust Inc. 9.125% Senior Notes Due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,24.59,24.59000015258789,Missing positive current market capitalization
+M_2026-08-22_105907,RWTO,RWTO,Redwood Trust Inc. 9.00% Senior Notes Due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,24.75,24.75,Missing positive current market capitalization
+M_2026-08-22_105907,RWTP,RWTP,Redwood Trust Inc. 9.125% Senior Notes Due 2030,NYSE,FALSE,TRUE,TRUE,30,,,,24.09,24.09000015258789,Missing positive current market capitalization
+M_2026-08-22_105907,RWTQ,RWTQ,Redwood Trust Inc. 9.500% Senior Notes Due 2030,NYSE,FALSE,TRUE,TRUE,30,,,,23.72,23.719999313354492,Missing positive current market capitalization
+M_2026-08-22_105907,RWTS,RWTS,Redwood Trust Inc. 9.75% Senior Notes Due 2031,NYSE,FALSE,TRUE,TRUE,30,,,,23.86,23.860000610351563,Missing positive current market capitalization
+M_2026-08-22_105907,SAJ,SAJ,Saratoga Investment Corp 8.00% Notes due 2027,NYSE,FALSE,TRUE,TRUE,30,,,,25.1,25.100000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,SAT,SAT,Saratoga Investment Corp 6.00% Notes due 2027,NYSE,FALSE,TRUE,TRUE,30,,,,24.99,24.989999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,SAV,SAV,Saratoga Investment Corp 7.50% Notes due 2031,NYSE,FALSE,TRUE,TRUE,30,,,,24.5,24.5,Missing positive current market capitalization
+M_2026-08-22_105907,SAY,SAY,Saratoga Investment Corp 8.125% Notes due 2027,NYSE,FALSE,TRUE,TRUE,30,,,,25.05,25.049999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,SAZ,SAZ,Saratoga Investment Corp 8.50% Notes due 2028,NYSE,FALSE,TRUE,TRUE,30,,,,25.18,25.18000030517578,Missing positive current market capitalization
+M_2026-08-22_105907,SCCD,SCCD,Sachem Capital Corp. 6.00% Notes due 2026,AMEX,FALSE,TRUE,TRUE,30,,,,24.99,24.989999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,SCCE,SCCE,Sachem Capital Corp. 6.00% Notes due 2027,AMEX,FALSE,TRUE,TRUE,30,,,,24.54,24.540000915527344,Missing positive current market capitalization
+M_2026-08-22_105907,SCCF,SCCF,Sachem Capital Corp. 7.125% Notes due 2027,AMEX,FALSE,TRUE,TRUE,30,,,,24.57,24.56999969482422,Missing positive current market capitalization
+M_2026-08-22_105907,SCCG,SCCG,Sachem Capital Corp. 8.00% Notes due 2027,AMEX,FALSE,TRUE,TRUE,30,,,,24.63,24.6299991607666,Missing positive current market capitalization
+M_2026-08-22_105907,SE,SE,Sea Limited American Depositary Shares each representing one Class A Ordinary Share,NYSE,FALSE,TRUE,TRUE,30,,,,117.53,117.52999877929688,Missing positive current market capitalization
+M_2026-08-22_105907,SFB,SFB,Stifel Financial Corporation 5.20% Senior Notes due 2047,NYSE,FALSE,TRUE,TRUE,30,,,,19.5,19.5,Missing positive current market capitalization
+M_2026-08-22_105907,SFL,SFL,SFL Corporation Ltd,NYSE,FALSE,TRUE,TRUE,30,,,,12.39,12.390000343322754,Missing positive current market capitalization
+M_2026-08-22_105907,SIF,SIF,SIFCO Industries Inc. Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,21.02,21.020000457763672,Missing positive current market capitalization
+M_2026-08-22_105907,SIG,SIG,Signet Jewelers Limited Common Shares,NYSE,FALSE,TRUE,TRUE,30,,,,81.37,81.37000274658203,Missing positive current market capitalization
+M_2026-08-22_105907,SJT,SJT,San Juan Basin Royalty Trust Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,2.72,2.7200000286102295,Missing positive current market capitalization
+M_2026-08-22_105907,SNSC,SNSC,SunScout Holding Limited Class A Ordinary Shares,AMEX,FALSE,TRUE,TRUE,1,,,,1.77,1.7699999809265137,Missing positive current market capitalization
+M_2026-08-22_105907,SNX,SNX,TD SYNNEX Corporation Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,250.14,250.13999938964844,Missing positive current market capitalization
+M_2026-08-22_105907,SNYR,SNYR,Synergy CHC Corp. Common Stock,NASDAQ,FALSE,TRUE,TRUE,30,,,,0.1009,0.10100000351667404,Missing positive current market capitalization
+M_2026-08-22_105907,SOJD,SOJD,Southern Company (The) Series 2020A 4.95% Junior Subordinated Notes due January 30 2080,NYSE,FALSE,TRUE,TRUE,30,,,,18.24,18.239999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,SOJE,SOJE,Southern Company (The) Series 2020C 4.20% Junior Subordinated Notes due October 15 2060,NYSE,FALSE,TRUE,TRUE,30,,,,15.9,15.899999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,SOJF,SOJF,Southern Company (The) Series 2025A 6.50% Junior Subordinated Notes due March 15 2085,NYSE,FALSE,TRUE,TRUE,30,,,,24.99,24.989999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,SOR,SOR,Source Capital Inc. Cmn Shs of BI,NYSE,FALSE,TRUE,TRUE,30,,,,46.82,46.81999969482422,Missing positive current market capitalization
+M_2026-08-22_105907,SREA,SREA,DBA Sempra 5.750% Junior Subordinated Notes due 2079,NYSE,FALSE,TRUE,TRUE,30,,,,20.5,20.5,Missing positive current market capitalization
+M_2026-08-22_105907,SRJN,SRJN,Spire Inc. 6.375% Junior Subordinated Notes due 2086,NYSE,FALSE,TRUE,TRUE,30,,,,22.49,22.489999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,SSL,SSL,Sasol Ltd. American Depositary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,12.49,12.489999771118164,Missing positive current market capitalization
+M_2026-08-22_105907,SWKHL,SWKHL,SWK Holdings Corporation 9.00% Senior Notes due 2027,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.425,25.424999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,TAL,TAL,TAL Education Group American Depositary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,11.32,11.319999694824219,Missing positive current market capitalization
+M_2026-08-22_105907,TCPA,TCPA,TransCanada PipeLines Limited 6.250% Junior Subordinated Notes due 2085,NYSE,FALSE,TRUE,TRUE,30,,,,22.1,22.100000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,TEO,TEO,Telecom Argentina SA,NYSE,FALSE,TRUE,TRUE,30,,,,13.14,13.140000343322754,Missing positive current market capitalization
+M_2026-08-22_105907,TGT,TGT,Target Corporation Common Stock,NYSE,TRUE,TRUE,TRUE,30,,,,165.44,165.44000244140625,Missing positive current market capitalization
+M_2026-08-22_105907,THM,THM,International Tower Hill Mines Ltd. Ordinary Shares (Canada),AMEX,FALSE,TRUE,TRUE,30,,,,2.81,2.809999942779541,Missing positive current market capitalization
+M_2026-08-22_105907,TMUSI,TMUSI,T-Mobile US Inc. 5.500% Senior Notes due June 2070,NASDAQ,FALSE,TRUE,TRUE,30,,,,20.69,20.690000534057617,Missing positive current market capitalization
+M_2026-08-22_105907,TMUSL,TMUSL,T-Mobile US Inc. 6.250% Senior Notes due 2069,NASDAQ,FALSE,TRUE,TRUE,30,,,,22.88,22.8799991607666,Missing positive current market capitalization
+M_2026-08-22_105907,TMUSZ,TMUSZ,T-Mobile US Inc. 5.500% Senior Notes due March 2070,NASDAQ,FALSE,TRUE,TRUE,30,,,,20.15,20.149999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,TOL,TOL,Toll Brothers Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,147.09,147.08999633789063,Missing positive current market capitalization
+M_2026-08-22_105907,TPGXL,TPGXL,TPG Operating Group II L.P. 6.950% Fixed-Rate Junior Subordinated Notes due 2064,NASDAQ,FALSE,TRUE,TRUE,30,,,,22.6,22.600000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,TPTS,TPTS,Terra Property Trust Inc. 7.00% Senior Secured Notes due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,16.3,16.299999237060547,Missing positive current market capitalization
+M_2026-08-22_105907,TRNI,TRNI,Trinity Capital Inc. 7.875% Notes Due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,25.32,25.31999969482422,Missing positive current market capitalization
+M_2026-08-22_105907,TRNZ,TRNZ,Trinity Capital Inc. 7.875% Notes due 2029,NYSE,FALSE,TRUE,TRUE,30,,,,25.35,25.350000381469727,Missing positive current market capitalization
+M_2026-08-22_105907,TRP,TRP,TC Energy Corporation Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,62.02,62.02000045776367,Missing positive current market capitalization
+M_2026-08-22_105907,TRT,TRT,Trio-Tech International Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,11,11,Missing positive current market capitalization
+M_2026-08-22_105907,TRX,TRX,TRX Gold Corporation Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,1.2,1.2000000476837158,Missing positive current market capitalization
+M_2026-08-22_105907,TS,TS,Tenaris S.A. American Depositary Shares,NYSE,FALSE,TRUE,TRUE,30,,,,52.66,52.65999984741211,Missing positive current market capitalization
+M_2026-08-22_105907,TTC,TTC,Toro Company (The) Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,99.44,99.44000244140625,Missing positive current market capitalization
+M_2026-08-22_105907,TVC,TVC,Tennessee Valley Authority Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,24.0801,24.079999923706055,Missing positive current market capitalization
+M_2026-08-22_105907,TWOD,TWOD,Two Harbors Investments Corp 9.375% Senior Notes due 2030,NYSE,FALSE,TRUE,TRUE,30,,,,25.41,25.40999984741211,Missing positive current market capitalization
+M_2026-08-22_105907,TX,TX,Ternium S.A. Ternium S.A. American Depositary Shares (each representing ten shares USD1.00 par value),NYSE,FALSE,TRUE,TRUE,30,,,,55.45,55.45000076293945,Missing positive current market capitalization
+M_2026-08-22_105907,TYG,TYG,Tortoise Energy Infrastructure Corporation Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,44.79,44.790000915527344,Missing positive current market capitalization
+M_2026-08-22_105907,UEC,UEC,Uranium Energy Corp. Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,12.76,12.760000228881836,Missing positive current market capitalization
+M_2026-08-22_105907,UFI,UFI,Unifi Inc. New Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,8.03,8.029999732971191,Missing positive current market capitalization
+M_2026-08-22_105907,UUU,UUU,Universal Safety Products Inc. Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,6.4,6.400000095367432,Missing positive current market capitalization
+M_2026-08-22_105907,UZD,UZD,Array Digital Infrastructure Inc. 6.250% Senior Notes due 2069,NYSE,FALSE,TRUE,TRUE,30,,,,19.1501,19.149999618530273,Missing positive current market capitalization
+M_2026-08-22_105907,UZE,UZE,Array Digital Infrastructure Inc. 5.500% Senior Notes due 2070,NYSE,FALSE,TRUE,TRUE,30,,,,16.7929,16.792999267578125,Missing positive current market capitalization
+M_2026-08-22_105907,UZF,UZF,Array Digital Infrastructure Inc. 5.500% Senior Notes due 2070,NYSE,FALSE,TRUE,TRUE,30,,,,16.855,16.854999542236328,Missing positive current market capitalization
+M_2026-08-22_105907,VGZ,VGZ,Vista Gold Corp Common Stock,AMEX,FALSE,TRUE,TRUE,30,,,,2.49,2.490000009536743,Missing positive current market capitalization
+M_2026-08-22_105907,VIV,VIV,Telefonica Brasil S.A. American Depositary Shares (Each representing One Common Share),NYSE,FALSE,TRUE,TRUE,30,,,,11.43,11.430000305175781,Missing positive current market capitalization
+M_2026-08-22_105907,VKQ,VKQ,Invesco Municipal Trust Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,9.7,9.699999809265137,Missing positive current market capitalization
+M_2026-08-22_105907,VMO,VMO,Invesco Municipal Opportunity Trust Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,9.68,9.680000305175781,Missing positive current market capitalization
+M_2026-08-22_105907,VMRK,VMRK,Vivmark Residential Common Shares of Beneficial Interest,NYSE,TRUE,TRUE,TRUE,30,,,,66.79,66.79000091552734,Missing positive current market capitalization
+M_2026-08-22_105907,WAFDP,WAFDP,WaFd Inc. Depositary Shares,NASDAQ,FALSE,TRUE,TRUE,30,,,,16.59,16.59000015258789,Missing positive current market capitalization
+M_2026-08-22_105907,WDS,WDS,Woodside Energy Group Limited American Depositary Shares each representing one Ordinary Share,NYSE,FALSE,TRUE,TRUE,30,,,,24.33,24.329999923706055,Missing positive current market capitalization
+M_2026-08-22_105907,WHFCL,WHFCL,WhiteHorse Finance Inc. 7.875% Notes due 2028,NASDAQ,FALSE,TRUE,TRUE,30,,,,25.34,25.34000015258789,Missing positive current market capitalization
+M_2026-08-22_105907,WMK,WMK,Weis Markets Inc. Common Stock,NYSE,FALSE,TRUE,TRUE,30,,,,71,71,Missing positive current market capitalization
+M_2026-08-22_105907,XELLL,XELLL,Xcel Energy Inc. 6.25% Junior Subordinated Notes Series due 2085,NASDAQ,FALSE,TRUE,TRUE,30,,,,22.515,22.514999389648438,Missing positive current market capitalization
+M_2026-08-22_105907,YRD,YRD,Yiren Digital Ltd. American Depositary Shares each representing two ordinary shares,NYSE,FALSE,TRUE,TRUE,30,,,,1.14,1.1399999856948853,Missing positive current market capitalization

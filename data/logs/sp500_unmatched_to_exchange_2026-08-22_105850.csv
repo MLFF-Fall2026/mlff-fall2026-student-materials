@@ -1,0 +1,3 @@
+sp500_symbol_original,sp500_company,sp500_weight_raw,sp500_sector_raw,symbol_yahoo,sp500_sector_clean,sp500_weight,is_sp500,universe_as_of,universe_build_id,universe_symbol_hash
+CBOE,CBOE GLOBAL MARKETS INC,4.6902582962174975e-4,,CBOE,,4.6974357505398306e-4,TRUE,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+2602335D,CONTRA HOLOGIC INCORPO,3.000101253417303e-8,,2602335D,,3.0046922776954635e-8,TRUE,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137

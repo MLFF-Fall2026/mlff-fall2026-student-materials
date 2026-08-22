@@ -1,0 +1,10 @@
+category,metric,value,rate,market_snapshot_id,market_data_as_of,universe_build_id,universe_symbol_hash
+Retrieval coverage,Requested symbols,5501,1,M_2026-08-22_105907,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Retrieval coverage,Symbols with usable quote data,5500,0.9998182148700236,M_2026-08-22_105907,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Retrieval coverage,Symbols with usable historical data,5489,0.9978185784402835,M_2026-08-22_105907,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Retrieval coverage,Symbols with either quote or historical data,5500,0.9998182148700236,M_2026-08-22_105907,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Retrieval coverage,Symbols with adequate liquidity history,5457,0.9920014542810398,M_2026-08-22_105907,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Retrieval coverage,Analysis-eligible symbols,5200,0.9452826758771132,M_2026-08-22_105907,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Eligibility outcome,Eligible,5200,0.9452826758771132,M_2026-08-22_105907,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Eligibility outcome,Missing positive current market capitalization,300,0.05453553899291038,M_2026-08-22_105907,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Eligibility outcome,No valid quote or historical-price data,1,1.8178512997636792e-4,M_2026-08-22_105907,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137

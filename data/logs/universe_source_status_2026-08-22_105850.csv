@@ -1,0 +1,5 @@
+source,records,attempts,warning_count,error_count
+NASDAQ,4179,1,0,0
+NYSE,2711,1,0,0
+AMEX,292,1,0,0
+S&P 500,504,1,0,0

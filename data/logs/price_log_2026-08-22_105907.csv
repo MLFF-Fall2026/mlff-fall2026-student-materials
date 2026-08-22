@@ -1,0 +1,35 @@
+market_snapshot_id,stage,batch_id,symbol_yahoo,status,message
+M_2026-08-22_105907,historical_price,P0001,,warning,"[1m[22mThere was 1 warning in `dplyr::mutate()`.
+[1m[22m[36mℹ[39m In argument: `data.. = purrr::map(...)`.
+Caused by warning:
+[33m![39m x = '2602335D', get = 'stock.prices': Error in getSymbols.yahoo(Symbols = ""2602335D"", env = <environment>, verbose = FALSE, : Unable to import “2602335D”.
+cannot open the connection
+ Removing 2602335D."
+M_2026-08-22_105907,historical_price,P0001,2602335D,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0057,,warning,"[1m[22mThere were 5 warnings in `dplyr::mutate()`.
+The first warning was:
+[1m[22m[36mℹ[39m In argument: `data.. = purrr::map(...)`.
+Caused by warning:
+[33m![39m x = 'LAB', get = 'stock.prices': Error in getSymbols.yahoo(Symbols = ""LAB"", env = <environment>, verbose = FALSE, : Unable to import “LAB”.
+cannot open the connection
+ Removing LAB.
+[1m[22m[36mℹ[39m Run ]8;;x-r-run:dplyr::last_dplyr_warnings()dplyr::last_dplyr_warnings()]8;; to see the 4 remaining warnings."
+M_2026-08-22_105907,historical_price,P0057,LAB,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0057,LABT,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0057,LAC,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0057,LAD,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0057,LADR,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0076,,warning,"[1m[22mThere were 6 warnings in `dplyr::mutate()`.
+The first warning was:
+[1m[22m[36mℹ[39m In argument: `data.. = purrr::map(...)`.
+Caused by warning:
+[33m![39m x = 'PBH', get = 'stock.prices': Error in getSymbols.yahoo(Symbols = ""PBH"", env = <environment>, verbose = FALSE, : Unable to import “PBH”.
+cannot open the connection
+ Removing PBH.
+[1m[22m[36mℹ[39m Run ]8;;x-r-run:dplyr::last_dplyr_warnings()dplyr::last_dplyr_warnings()]8;; to see the 5 remaining warnings."
+M_2026-08-22_105907,historical_price,P0076,PBH,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0076,PBHC,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0076,PBI,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0076,PBK,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0076,PBLS,no_data,No valid close-and-volume observation was returned.
+M_2026-08-22_105907,historical_price,P0076,PBM,no_data,No valid close-and-volume observation was returned.

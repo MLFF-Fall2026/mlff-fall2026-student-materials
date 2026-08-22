@@ -1,0 +1,2669 @@
+---
+title: "U.S. Listed Equity Universe Vs the S&P 500"
+subtitle: "A reproducible EDA of US listed operating companies"
+author: "Mike Aguilar"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-summary: "Show R code"
+    code-tools: true
+    code-overflow: wrap
+    df-print: paged
+    theme: cosmo
+    fig-responsive: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: true
+  message: false
+  error: false
+  freeze: false
+knitr:
+  opts_chunk:
+    fig.align: center
+    fig.width: 11
+    fig.height: 6.5
+    dpi: 160
+---
+
+# Architecture 
+
+This report is the third stage of a deliberately separated data pipeline:
+
+1. `01_build_universe.R` defines and freezes the listed-security universe and S&P 500 membership snapshot.
+2. `02_update_market_data.R` retrieves fresh prices, market capitalization, valuation fields, and other fields for that fixed ticker list.
+3. `03_eda.qmd` reads the stable `*_latest` files and conducts the analysis.
+
+**Scope note:** This report intentionally excludes exchange-traded funds and notes (ETFs/ETNs). The universe is built from exchange stock-screener listings (`tidyquant::tq_exchange()`), a source that does not enumerate fund/ETP products in the first place, so ETFs and ETNs are structurally absent rather than merely rare. The analysis below therefore covers common stocks, ADRs, preferred shares, and other listed operating-company securities, not the full population of exchange-traded securities.
+
+```{r}
+#| label: report-header-dates
+#| echo: false
+#| include: false
+
+# Purpose:
+#   Read just the two lightweight *_metadata_latest.rds files so the "as of"
+#   and "retrieved" dates can be shown in the introduction, before the full
+#   load-and-validate chunk in the Setup section runs. This is a deliberately
+#   minimal, duplicate read (no schema validation) purely for display; the
+#   Setup section chunk still performs the authoritative load and validation.
+# Inputs:
+#   data/universe/universe_metadata_latest.rds and
+#   data/market/market_metadata_latest.rds.
+# Outputs:
+#   Character strings used inline below: the as-of dates each dataset
+#   *pertains to*, and the timestamps each dataset was actually *retrieved*.
+
+header_project_directory <- normalizePath(getwd(), mustWork = FALSE)
+header_universe_metadata_path <- file.path(
+  header_project_directory, "data", "universe", "universe_metadata_latest.rds"
+)
+header_market_metadata_path <- file.path(
+  header_project_directory, "data", "market", "market_metadata_latest.rds"
+)
+
+if (file.exists(header_universe_metadata_path)) {
+  header_universe_metadata <- readRDS(header_universe_metadata_path)
+  header_universe_as_of <- format(
+    as.Date(header_universe_metadata$universe_as_of[[1]]), "%B %d, %Y"
+  )
+  header_universe_built_at <- format(
+    header_universe_metadata$universe_built_at[[1]], "%B %d, %Y at %I:%M %p"
+  )
+} else {
+  header_universe_as_of <- "unavailable"
+  header_universe_built_at <- "unavailable"
+}
+
+if (file.exists(header_market_metadata_path)) {
+  header_market_metadata <- readRDS(header_market_metadata_path)
+  header_market_data_as_of <- format(
+    as.Date(header_market_metadata$market_data_as_of[[1]]), "%B %d, %Y"
+  )
+  header_market_retrieved_at <- format(
+    header_market_metadata$market_retrieved_at[[1]], "%B %d, %Y at %I:%M %p"
+  )
+} else {
+  header_market_data_as_of <- "unavailable"
+  header_market_retrieved_at <- "unavailable"
+}
+```
+
+Last Update of Universe: **`r header_universe_as_of`** — the date the frozen listed-security universe and S&P 500 membership pertain to. (Build actually run: `r header_universe_built_at`.)
+
+Last Update of Market Data: **`r header_market_data_as_of`** — the date current prices, market capitalization, earnings, and valuation fields pertain to. (Snapshot actually retrieved: `r header_market_retrieved_at`.)
+
+
+# Setup and data loading
+
+```{r}
+#| label: setup
+#| echo: false
+#| code-fold: true
+#| code-summary: "Show setup and helper functions"
+#| warning: false
+
+# Purpose:
+#   Load the reporting packages, define visual settings, and create reusable
+#   helper functions for validation, formatting, coverage tables, and plots.
+# Inputs:
+#   Installed R packages only. This chunk does not read project data or access
+#   the internet.
+# Outputs:
+#   Formatting helpers, validation helpers, benchmark colors, and report theme.
+
+required_packages <- c(
+  "tidyverse",
+  "ggplot2",
+  "patchwork",
+  "scales",
+  "knitr",
+  "kableExtra"
+)
+
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0L) {
+  stop(
+    paste0(
+      "Install the following required packages before rendering this document: ",
+      paste(missing_packages, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(ggplot2)
+  library(patchwork)
+  library(scales)
+  library(kableExtra)
+})
+
+options(
+  scipen = 999,
+  dplyr.summarise.inform = FALSE,
+  width = 120
+)
+
+# The report warns when the latest market snapshot is old, but it does not
+# silently download new data. Fresh data must be created explicitly by Stage 2.
+maximum_snapshot_age_days <- 7L
+
+benchmark_levels <- c("Non-S&P 500", "S&P 500")
+
+benchmark_colors <- c(
+  "S&P 500" = "#123B66",
+  "Non-S&P 500" = "#667480"
+)
+
+report_theme <- theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10.5, margin = margin(b = 8)),
+    plot.caption = element_text(size = 8.5, color = "grey35", hjust = 0),
+    axis.title = element_text(face = "bold"),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold"),
+    plot.margin = margin(8, 12, 8, 8)
+  )
+
+theme_set(report_theme)
+
+safe_rate <- function(numerator, denominator) {
+  if (length(denominator) != 1L || is.na(denominator) || denominator == 0) {
+    return(NA_real_)
+  }
+
+  numerator / denominator
+}
+
+safe_median <- function(x) {
+  finite_values <- x[is.finite(x)]
+
+  if (length(finite_values) == 0L) {
+    return(NA_real_)
+  }
+
+  stats::median(finite_values)
+}
+
+safe_quantile <- function(x, probability) {
+  finite_values <- x[is.finite(x)]
+
+  if (length(finite_values) == 0L) {
+    return(NA_real_)
+  }
+
+  unname(
+    stats::quantile(
+      finite_values,
+      probs = probability,
+      na.rm = TRUE,
+      names = FALSE
+    )
+  )
+}
+
+format_count <- function(x) {
+  dplyr::if_else(
+    is.na(x),
+    "NA",
+    scales::number(x, accuracy = 1, big.mark = ",")
+  )
+}
+
+format_dollar_short <- function(x) {
+  dplyr::if_else(
+    is.na(x),
+    "NA",
+    scales::dollar(
+      x,
+      accuracy = 0.1,
+      scale_cut = scales::cut_short_scale()
+    )
+  )
+}
+
+format_number_short <- function(x) {
+  dplyr::if_else(
+    is.na(x),
+    "NA",
+    scales::number(
+      x,
+      accuracy = 0.1,
+      scale_cut = scales::cut_short_scale()
+    )
+  )
+}
+
+format_percent_1 <- function(x) {
+  dplyr::if_else(
+    is.na(x),
+    "NA",
+    scales::percent(x, accuracy = 0.1)
+  )
+}
+
+validate_required_columns <- function(data, required_columns, object_name) {
+  if (!is.data.frame(data)) {
+    stop(object_name, " is not a data frame.", call. = FALSE)
+  }
+
+  missing_columns <- setdiff(required_columns, names(data))
+
+  if (length(missing_columns) > 0L) {
+    stop(
+      paste0(
+        object_name,
+        " is missing required columns: ",
+        paste(missing_columns, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  invisible(TRUE)
+}
+
+show_table <- function(data, caption = NULL, digits = 2, col_names = NULL,
+                        font_size = 13) {
+  if (!is.data.frame(data) || nrow(data) == 0L) {
+    cat("*No observations are available for this table.*\n\n")
+    return(invisible(NULL))
+  }
+
+  # Allow short, human-readable header labels (optionally with "<br>" line
+  # breaks) instead of raw snake_case column names, which are hard to read
+  # at normal table widths. escape = FALSE lets those "<br>" tags render;
+  # the underlying values in these tables are pre-formatted numbers/strings
+  # with no HTML-sensitive characters, so this is safe here.
+  display_names <- if (is.null(col_names)) names(data) else col_names
+
+  table_html <- knitr::kable(
+    data,
+    format = "html",
+    caption = caption,
+    digits = digits,
+    escape = FALSE,
+    row.names = FALSE,
+    col.names = display_names
+  ) |>
+    kableExtra::kable_styling(
+      bootstrap_options = c("condensed", "hover", "responsive"),
+      full_width = FALSE,
+      font_size = font_size
+    )
+
+  print(table_html)
+  cat("\n\n")
+  invisible(data)
+}
+
+empty_plot <- function(title, message, caption = NULL) {
+  ggplot() +
+    annotate("text", x = 0, y = 0, label = message, size = 4.2) +
+    xlim(-1, 1) +
+    ylim(-1, 1) +
+    labs(title = title, caption = caption) +
+    theme_void(base_size = 11) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.caption = element_text(size = 8.5, color = "grey35", hjust = 0),
+      plot.margin = margin(8, 12, 8, 8)
+    )
+}
+
+metric_coverage_table <- function(data, metrics, labels = metrics) {
+  if (length(metrics) != length(labels)) {
+    stop("metrics and labels must have the same length.", call. = FALSE)
+  }
+
+  total_observations <- if (is.data.frame(data)) nrow(data) else 0L
+
+  purrr::map2_dfr(metrics, labels, function(metric, label) {
+    if (
+      !is.data.frame(data) ||
+      !(metric %in% names(data)) ||
+      total_observations == 0L
+    ) {
+      return(tibble::tibble(
+        metric = label,
+        initial_observations = total_observations,
+        valid_observations = 0L,
+        missing_observations = total_observations,
+        missingness_rate = safe_rate(total_observations, total_observations),
+        sp500_valid = 0L,
+        broader_market_valid = 0L
+      ))
+    }
+
+    values <- data[[metric]]
+    valid <- is.finite(values)
+
+    tibble::tibble(
+      metric = label,
+      initial_observations = total_observations,
+      valid_observations = sum(valid, na.rm = TRUE),
+      missing_observations = sum(!valid, na.rm = TRUE),
+      missingness_rate = safe_rate(sum(!valid, na.rm = TRUE), total_observations),
+      sp500_valid = sum(valid & data$is_sp500, na.rm = TRUE),
+      broader_market_valid = sum(valid & !data$is_sp500, na.rm = TRUE)
+    )
+  })
+}
+
+make_density_plot <- function(
+  data,
+  variable,
+  title,
+  subtitle,
+  x_label,
+  caption,
+  log10_axis = FALSE,
+  lower_bound = NULL,
+  upper_bound = NULL
+) {
+  if (!is.data.frame(data) || nrow(data) == 0L || !(variable %in% names(data))) {
+    return(empty_plot(title, "No usable observations are available.", caption))
+  }
+
+  plot_data <- data |>
+    dplyr::filter(is.finite(.data[[variable]]))
+
+  if (!is.null(lower_bound)) {
+    plot_data <- plot_data |>
+      dplyr::filter(.data[[variable]] >= lower_bound)
+  }
+
+  if (!is.null(upper_bound)) {
+    plot_data <- plot_data |>
+      dplyr::filter(.data[[variable]] <= upper_bound)
+  }
+
+  if (isTRUE(log10_axis)) {
+    plot_data <- plot_data |>
+      dplyr::filter(.data[[variable]] > 0)
+  }
+
+  plot_data <- plot_data |>
+    dplyr::group_by(benchmark_group) |>
+    dplyr::filter(
+      dplyr::n() >= 2L,
+      dplyr::n_distinct(.data[[variable]]) >= 2L
+    ) |>
+    dplyr::ungroup()
+
+  if (nrow(plot_data) < 2L || dplyr::n_distinct(plot_data[[variable]]) < 2L) {
+    return(
+      empty_plot(
+        title,
+        "Too few distinct observations are available for a density estimate.",
+        caption
+      )
+    )
+  }
+
+  plot <- ggplot(
+    plot_data,
+    aes(
+      x = .data[[variable]],
+      color = benchmark_group,
+      fill = benchmark_group
+    )
+  ) +
+    geom_density(alpha = 0.28, linewidth = 0.9, adjust = 1.05, na.rm = TRUE) +
+    scale_color_manual(values = benchmark_colors, drop = FALSE) +
+    scale_fill_manual(values = benchmark_colors, drop = FALSE) +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      x = x_label,
+      y = "Density",
+      caption = caption
+    )
+
+  if (isTRUE(log10_axis)) {
+    plot <- plot +
+      scale_x_log10(
+        labels = scales::label_dollar(
+          accuracy = 1,
+          scale_cut = scales::cut_short_scale()
+        )
+      )
+  }
+
+  plot
+}
+
+missingness_row <- function(scope, data, variable, missing_condition = NULL) {
+  if (!is.data.frame(data)) {
+    return(tibble::tibble())
+  }
+
+  total <- nrow(data)
+
+  if (total == 0L) {
+    return(tibble::tibble(
+      scope = scope,
+      variable = variable,
+      total_observations = 0L,
+      missing_observations = 0L,
+      valid_observations = 0L,
+      missingness_rate = NA_real_
+    ))
+  }
+
+  if (is.null(missing_condition)) {
+    if (!(variable %in% names(data))) {
+      missing <- rep(TRUE, total)
+    } else {
+      missing <- is.na(data[[variable]])
+    }
+  } else {
+    missing <- missing_condition(data)
+    missing[is.na(missing)] <- TRUE
+  }
+
+  tibble::tibble(
+    scope = scope,
+    variable = variable,
+    total_observations = total,
+    missing_observations = sum(missing),
+    valid_observations = total - sum(missing),
+    missingness_rate = safe_rate(sum(missing), total)
+  )
+}
+```
+
+```{r}
+#| label: load-latest-data
+#| include: true
+
+# Purpose:
+#   Read the latest static-universe and market-data files, validate their
+#   schemas, and verify that every dataset belongs to the same universe build.
+# Inputs:
+#   data/universe/*_latest.rds and data/market/*_latest.rds created by Stages 1
+#   and 2. No external API or website is contacted.
+# Outputs:
+#   universe_df, ticker_master_df, sp500_df, market_snapshot_df,
+#   price_history_df, analysis_enriched_df, and equity_universe_df.
+
+project_directory <- normalizePath(getwd(), mustWork = FALSE)
+universe_directory <- file.path(project_directory, "data", "universe")
+market_directory <- file.path(project_directory, "data", "market")
+
+latest_paths <- c(
+  universe = file.path(universe_directory, "universe_latest.rds"),
+  ticker_master = file.path(universe_directory, "ticker_master_latest.rds"),
+  sp500 = file.path(universe_directory, "sp500_constituents_latest.rds"),
+  universe_metadata = file.path(universe_directory, "universe_metadata_latest.rds"),
+  market_snapshot = file.path(market_directory, "market_snapshot_latest.rds"),
+  price_history = file.path(market_directory, "price_history_latest.rds"),
+  market_metadata = file.path(market_directory, "market_metadata_latest.rds"),
+  market_quality = file.path(market_directory, "market_quality_latest.rds")
+)
+
+missing_latest_files <- latest_paths[!file.exists(latest_paths)]
+
+if (length(missing_latest_files) > 0L) {
+  stop(
+    paste0(
+      "Required latest data files are missing: ",
+      paste(missing_latest_files, collapse = ", "),
+      ". Run 01_build_universe.R and then 02_update_market_data.R."
+    ),
+    call. = FALSE
+  )
+}
+
+universe_df <- readRDS(latest_paths[["universe"]])
+ticker_master_df <- readRDS(latest_paths[["ticker_master"]])
+sp500_df <- readRDS(latest_paths[["sp500"]])
+universe_metadata_df <- readRDS(latest_paths[["universe_metadata"]])
+market_snapshot_df <- readRDS(latest_paths[["market_snapshot"]])
+price_history_df <- readRDS(latest_paths[["price_history"]])
+market_metadata_df <- readRDS(latest_paths[["market_metadata"]])
+market_quality_df <- readRDS(latest_paths[["market_quality"]])
+
+validate_required_columns(
+  universe_df,
+  c(
+    "symbol_original",
+    "symbol_yahoo",
+    "company",
+    "exchange",
+    "security_type",
+    "is_sp500",
+    "benchmark_group",
+    "sector_clean",
+    "industry_clean",
+    "universe_build_id",
+    "universe_symbol_hash"
+  ),
+  "universe_df"
+)
+
+validate_required_columns(
+  ticker_master_df,
+  c(
+    "symbol_yahoo",
+    "company",
+    "security_type",
+    "is_sp500",
+    "sector_clean",
+    "universe_build_id",
+    "universe_symbol_hash"
+  ),
+  "ticker_master_df"
+)
+
+validate_required_columns(
+  sp500_df,
+  c(
+    "symbol_yahoo",
+    "sp500_weight",
+    "sp500_sector_clean",
+    "universe_build_id",
+    "universe_symbol_hash"
+  ),
+  "sp500_df"
+)
+
+validate_required_columns(
+  market_snapshot_df,
+  c(
+    "symbol_yahoo",
+    "is_sp500",
+    "market_cap",
+    "reference_price",
+    "avg_daily_share_volume_30d",
+    "avg_daily_dollar_volume_30d",
+    "trailing_pe",
+    "price_to_book",
+    "analysis_eligible",
+    "analysis_exclusion_reason",
+    "market_data_as_of",
+    "market_snapshot_id",
+    "universe_build_id",
+    "universe_symbol_hash"
+  ),
+  "market_snapshot_df"
+)
+
+validate_required_columns(
+  price_history_df,
+  c(
+    "symbol_yahoo",
+    "date",
+    "close",
+    "volume",
+    "market_snapshot_id",
+    "universe_build_id",
+    "universe_symbol_hash"
+  ),
+  "price_history_df"
+)
+
+validate_required_columns(
+  universe_metadata_df,
+  c(
+    "universe_build_id",
+    "universe_as_of",
+    "universe_symbol_hash"
+  ),
+  "universe_metadata_df"
+)
+
+validate_required_columns(
+  market_metadata_df,
+  c(
+    "market_snapshot_id",
+    "market_data_as_of",
+    "latest_history_date",
+    "liquidity_trading_days",
+    "minimum_valid_trading_days",
+    "universe_build_id",
+    "universe_symbol_hash"
+  ),
+  "market_metadata_df"
+)
+
+if (nrow(universe_metadata_df) != 1L || nrow(market_metadata_df) != 1L) {
+  stop(
+    "The universe and market metadata files must each contain exactly one row.",
+    call. = FALSE
+  )
+}
+
+expected_universe_id <- as.character(
+  universe_metadata_df$universe_build_id[[1]]
+)
+expected_universe_hash <- as.character(
+  universe_metadata_df$universe_symbol_hash[[1]]
+)
+expected_market_snapshot_id <- as.character(
+  market_metadata_df$market_snapshot_id[[1]]
+)
+
+universe_id_checks <- c(
+  all(universe_df$universe_build_id == expected_universe_id),
+  all(ticker_master_df$universe_build_id == expected_universe_id),
+  all(sp500_df$universe_build_id == expected_universe_id),
+  all(market_snapshot_df$universe_build_id == expected_universe_id),
+  nrow(price_history_df) == 0L ||
+    all(price_history_df$universe_build_id == expected_universe_id),
+  as.character(market_metadata_df$universe_build_id[[1]]) ==
+    expected_universe_id
+)
+
+universe_hash_checks <- c(
+  all(universe_df$universe_symbol_hash == expected_universe_hash),
+  all(ticker_master_df$universe_symbol_hash == expected_universe_hash),
+  all(sp500_df$universe_symbol_hash == expected_universe_hash),
+  all(market_snapshot_df$universe_symbol_hash == expected_universe_hash),
+  nrow(price_history_df) == 0L ||
+    all(price_history_df$universe_symbol_hash == expected_universe_hash),
+  as.character(market_metadata_df$universe_symbol_hash[[1]]) ==
+    expected_universe_hash
+)
+
+snapshot_id_checks <- c(
+  all(market_snapshot_df$market_snapshot_id == expected_market_snapshot_id),
+  nrow(price_history_df) == 0L ||
+    all(price_history_df$market_snapshot_id == expected_market_snapshot_id)
+)
+
+if (!all(universe_id_checks) || !all(universe_hash_checks)) {
+  stop(
+    paste0(
+      "The latest files do not all belong to the same static universe. ",
+      "Run 02_update_market_data.R after the most recent universe build."
+    ),
+    call. = FALSE
+  )
+}
+
+if (!all(snapshot_id_checks)) {
+  stop(
+    "The latest market snapshot and price-history files have different snapshot IDs.",
+    call. = FALSE
+  )
+}
+
+universe_as_of <- as.Date(universe_metadata_df$universe_as_of[[1]])
+analysis_date <- as.Date(market_metadata_df$market_data_as_of[[1]])
+latest_history_date <- as.Date(market_metadata_df$latest_history_date[[1]])
+market_snapshot_id <- expected_market_snapshot_id
+universe_build_id <- expected_universe_id
+universe_symbol_hash <- expected_universe_hash
+liquidity_trading_days <- as.integer(
+  market_metadata_df$liquidity_trading_days[[1]]
+)
+minimum_valid_trading_days <- as.integer(
+  market_metadata_df$minimum_valid_trading_days[[1]]
+)
+snapshot_age_days <- as.integer(Sys.Date() - analysis_date)
+
+universe_df <- universe_df |>
+  dplyr::mutate(
+    benchmark_group = factor(benchmark_group, levels = benchmark_levels)
+  )
+
+ticker_master_df <- ticker_master_df |>
+  dplyr::mutate(
+    benchmark_group = factor(
+      dplyr::if_else(is_sp500, "S&P 500", "Non-S&P 500"),
+      levels = benchmark_levels
+    )
+  )
+
+market_snapshot_df <- market_snapshot_df |>
+  dplyr::mutate(
+    benchmark_group = factor(
+      dplyr::if_else(is_sp500, "S&P 500", "Non-S&P 500"),
+      levels = benchmark_levels
+    )
+  )
+
+analysis_enriched_df <- market_snapshot_df
+
+equity_universe_df <- market_snapshot_df |>
+  dplyr::filter(analysis_eligible) |>
+  dplyr::arrange(symbol_yahoo) |>
+  dplyr::distinct(symbol_yahoo, .keep_all = TRUE) |>
+  dplyr::mutate(
+    benchmark_group = factor(benchmark_group, levels = benchmark_levels)
+  )
+
+if (nrow(equity_universe_df) == 0L) {
+  stop(
+    paste0(
+      "The latest market snapshot contains no analysis-eligible symbols. ",
+      "Review Stage 2 retrieval logs."
+    ),
+    call. = FALSE
+  )
+}
+
+sp500_universe_match <- sp500_df |>
+  dplyr::anti_join(
+    universe_df |>
+      dplyr::distinct(symbol_yahoo),
+    by = "symbol_yahoo"
+  )
+
+source_caption <- paste0(
+  "Static universe: tidyquant exchange and index data as of ",
+  universe_as_of,
+  "; market data: Yahoo Finance snapshot retrieved by Stage 2 as of ",
+  analysis_date,
+  "."
+)
+```
+
+```{r}
+#| label: data-provenance
+#| results: asis
+
+# Purpose:
+#   Display the exact universe and market snapshot loaded by this report and
+#   warn prominently when the latest market-data file is older than expected.
+# Inputs:
+#   The validated metadata and analysis objects created in load-latest-data.
+# Outputs:
+#   A provenance table, an eligibility table, and an optional staleness warning.
+
+provenance_table <- tibble::tibble(
+  item = c(
+    "Universe build ID",
+    "Universe as-of date",
+    "Universe symbol hash",
+    "Market snapshot ID",
+    "Market-data as-of date",
+    "Latest daily-price date",
+    "Market snapshot age in calendar days",
+    "Full listed-security records",
+    "Fixed ticker-master symbols",
+    "Analysis-eligible symbols"
+  ),
+  value = c(
+    universe_build_id,
+    as.character(universe_as_of),
+    universe_symbol_hash,
+    market_snapshot_id,
+    as.character(analysis_date),
+    as.character(latest_history_date),
+    as.character(snapshot_age_days),
+    format_count(nrow(universe_df)),
+    format_count(nrow(ticker_master_df)),
+    format_count(nrow(equity_universe_df))
+  )
+)
+
+eligibility_summary <- market_snapshot_df |>
+  dplyr::count(analysis_exclusion_reason, name = "ticker_count") |>
+  dplyr::mutate(
+    share_of_ticker_master = safe_rate(ticker_count, nrow(market_snapshot_df)),
+    share_of_ticker_master = format_percent_1(share_of_ticker_master)
+  ) |>
+  dplyr::arrange(dplyr::desc(ticker_count))
+
+#show_table(provenance_table, "Data provenance for this rendered report")
+#show_table(
+#  eligibility_summary,
+#  "Stage 2 market-data eligibility outcomes"
+#)
+
+if (is.finite(snapshot_age_days) && snapshot_age_days > maximum_snapshot_age_days) {
+  cat(
+    paste0(
+      "::: {.callout-warning}\n",
+      "## Market snapshot may be stale\n\n",
+      "The latest market-data file is ",
+      snapshot_age_days,
+      " calendar days old. Run `02_update_market_data.R` before interpreting ",
+      "this report as a current market snapshot.\n",
+      ":::\n"
+    )
+  )
+}
+```
+
+# Module 1: Universe scale and security-type breakdown
+
+The full listed-security universe is used in this module, with ETFs/ETNs excluded per the scope note above. Counts therefore include common stocks, ADRs, preferred securities, warrants, rights, units, funds, and other non-ETF listings retained by the static universe build.
+
+```{r}
+#| label: module1-summaries
+#| results: asis
+
+# Purpose:
+#   Summarize the size and composition of the broad static exchange universe
+#   before any operating-company or current-market-data filters are applied.
+# Inputs:
+#   universe_df and sp500_df from Stage 1.
+# Outputs:
+#   Exchange counts, security-type counts, benchmark splits, and match coverage.
+
+module1_exchange_summary <- universe_df |>
+  dplyr::count(exchange, name = "ticker_count") |>
+  dplyr::arrange(dplyr::desc(ticker_count))
+
+module1_security_summary <- universe_df |>
+  dplyr::count(security_type, name = "ticker_count") |>
+  dplyr::arrange(dplyr::desc(ticker_count))
+
+module1_detail_summary <- universe_df |>
+  dplyr::count(
+    exchange,
+    security_type,
+    benchmark_group,
+    name = "ticker_count",
+    .drop = FALSE
+  ) |>
+  dplyr::arrange(exchange, security_type, benchmark_group)
+
+# ETFs/ETNs are out of scope for this report (see the scope note in
+# Architecture) and are dropped before the Module 1 chart is built. The single
+# "ETF or ETN" record in the current static universe is a name-matching false
+# positive (WisdomTree Inc.'s own listed common stock, not a fund), so this
+# filter has no effect on any genuine fund observation.
+module1_chart_summary <- universe_df |>
+  dplyr::filter(security_type != "ETF or ETN") |>
+  dplyr::count(exchange, security_type, name = "ticker_count", .drop = FALSE) |>
+  dplyr::arrange(exchange, security_type)
+
+module1_coverage <- tibble::tibble(
+  metric = "Inferred security-type classification",
+  initial_observations = nrow(universe_df),
+  valid_observations = sum(!is.na(universe_df$security_type)),
+  missing_observations = sum(is.na(universe_df$security_type)),
+  missingness_rate = format_percent_1(
+    safe_rate(sum(is.na(universe_df$security_type)), nrow(universe_df))
+  ),
+  sp500_valid = sum(
+    universe_df$is_sp500 & !is.na(universe_df$security_type)
+  ),
+  broader_market_valid = sum(
+    !universe_df$is_sp500 & !is.na(universe_df$security_type)
+  )
+)
+
+module1_benchmark_match_summary <- tibble::tibble(
+  measure = c(
+    "S&P 500 constituent symbols in static benchmark file",
+    "Matched to full exchange universe",
+    "Supplemented in ticker master because no exchange match was found",
+    "Exchange-universe match rate",
+    "Missing security-type classification rate"
+  ),
+  value = c(
+    dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE),
+    dplyr::n_distinct(
+      universe_df$symbol_yahoo[universe_df$is_sp500],
+      na.rm = TRUE
+    ),
+    nrow(sp500_universe_match),
+    safe_rate(
+      dplyr::n_distinct(
+        universe_df$symbol_yahoo[universe_df$is_sp500],
+        na.rm = TRUE
+      ),
+      dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE)
+    ),
+    safe_rate(
+      sum(is.na(universe_df$security_type)),
+      nrow(universe_df)
+    )
+  ),
+  display_value = c(
+    format_count(dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE)),
+    format_count(
+      dplyr::n_distinct(
+        universe_df$symbol_yahoo[universe_df$is_sp500],
+        na.rm = TRUE
+      )
+    ),
+    format_count(nrow(sp500_universe_match)),
+    format_percent_1(
+      safe_rate(
+        dplyr::n_distinct(
+          universe_df$symbol_yahoo[universe_df$is_sp500],
+          na.rm = TRUE
+        ),
+        dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE)
+      )
+    ),
+    format_percent_1(
+      safe_rate(
+        sum(is.na(universe_df$security_type)),
+        nrow(universe_df)
+      )
+    )
+  )
+)
+
+#show_table(module1_coverage, "Module 1 data coverage")
+#show_table(module1_exchange_summary, "Ticker records by exchange")
+#show_table(module1_security_summary, "Ticker records by inferred security type")
+#show_table(
+#  module1_detail_summary,
+#  "Ticker records by exchange, inferred security type, and benchmark membership"
+#)
+#show_table(
+#  module1_benchmark_match_summary |>
+#    dplyr::select(measure, display_value),
+#  "Module 1 benchmark matching and classification coverage"
+#)
+```
+
+```{r}
+#| label: fig-module1-universe-scale
+#| fig-width: 10
+#| fig-height: 6.5
+#| fig-cap: "Listed-security counts by exchange and inferred security type (ETFs/ETNs excluded; see scope note)."
+
+# Purpose:
+#   Visualize how the broad listed universe is distributed across exchanges
+#   and security types, collapsed across S&P 500 membership.
+# Inputs:
+#   module1_chart_summary created in the preceding chunk (ETF/ETN excluded).
+# Outputs:
+#   One stacked bar per exchange, with security-type slices individually
+#   labeled so small categories remain legible.
+
+# Order security types by overall size so the largest slice anchors each bar
+# and the legend reads largest-to-smallest.
+module1_type_order <- module1_chart_summary |>
+  dplyr::group_by(security_type) |>
+  dplyr::summarise(total = sum(ticker_count), .groups = "drop") |>
+  dplyr::arrange(dplyr::desc(total)) |>
+  dplyr::pull(security_type)
+
+module1_type_totals <- module1_chart_summary |>
+  dplyr::group_by(security_type) |>
+  dplyr::summarise(total = sum(ticker_count), .groups = "drop") |>
+  dplyr::mutate(
+    security_type = factor(security_type, levels = module1_type_order)
+  ) |>
+  dplyr::arrange(security_type)
+
+# Build legend labels that carry the overall count for each security type, so
+# small categories are still identifiable even when their bar slice is thin.
+module1_type_labels <- stats::setNames(
+  paste0(
+    module1_type_totals$security_type,
+    " (", scales::comma(module1_type_totals$total), ")"
+  ),
+  as.character(module1_type_totals$security_type)
+)
+
+module1_type_colors <- stats::setNames(
+  scales::hue_pal()(length(module1_type_order)),
+  module1_type_order
+)
+
+module1_plot_data <- module1_chart_summary |>
+  dplyr::mutate(
+    security_type = factor(security_type, levels = rev(module1_type_order)),
+    exchange = factor(exchange, levels = c("NASDAQ", "NYSE", "AMEX"))
+  )
+
+module1_exchange_totals <- module1_plot_data |>
+  dplyr::group_by(exchange) |>
+  dplyr::summarise(total_tickers = sum(ticker_count, na.rm = TRUE), .groups = "drop")
+
+module1_plot <- ggplot(
+  module1_plot_data,
+  aes(x = exchange, y = ticker_count, fill = security_type)
+) +
+  geom_col(width = 0.62) +
+  geom_text(
+    # Below this count, in-bar labels start to overlap on thin slices; the
+    # legend already carries the exact total for every security type,
+    # including the smallest categories, so labels are omitted rather than
+    # crowded here.
+    data = dplyr::filter(module1_plot_data, ticker_count >= 15),
+    aes(label = scales::comma(ticker_count)),
+    position = position_stack(vjust = 0.5),
+    size = 2.8,
+    color = "#1A1A1A"
+  ) +
+  geom_text(
+    data = module1_exchange_totals,
+    aes(x = exchange, y = total_tickers, label = scales::comma(total_tickers)),
+    inherit.aes = FALSE,
+    vjust = -0.5,
+    fontface = "bold",
+    size = 3.4,
+    color = "#123B66"
+  ) +
+  scale_fill_manual(
+    values = module1_type_colors,
+    breaks = module1_type_order,
+    labels = module1_type_labels
+  ) +
+  scale_y_continuous(
+    labels = scales::label_number(big.mark = ","),
+    expand = expansion(mult = c(0, 0.12))
+  ) +
+  coord_cartesian(clip = "off") +
+  labs(
+    title = "Beyond common stock, the listed universe includes ADRs, preferred shares, and other structures",
+    subtitle = paste0(
+      "Counts use the static exchange snapshot as of ", universe_as_of,
+      "; security type is inferred from names and ticker patterns; ETFs/ETNs excluded."
+    ),
+    x = NULL,
+    y = "Ticker records",
+    fill = "Security type (total)",
+    caption = source_caption
+  ) +
+  theme(
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "right"
+  )
+
+module1_plot
+```
+
+
+## Consolidated data coverage
+
+```{r}
+#| label: consolidated-missingness
+#| results: asis
+
+# Purpose:
+#   Consolidate missingness across the static universe, fixed ticker master,
+#   latest market snapshot, and final analysis-eligible sample.
+# Inputs:
+#   universe_df, ticker_master_df, analysis_enriched_df, and equity_universe_df.
+# Outputs:
+#   One table showing the scope, valid count, missing count, and missingness rate
+#   for the fields most important to the four EDA modules.
+
+consolidated_missingness <- dplyr::bind_rows(
+  missingness_row("Full listed-security universe", universe_df, "exchange"),
+  missingness_row(
+    "Full listed-security universe",
+    universe_df,
+    "security_type"
+  ),
+  missingness_row(
+    "Fixed ticker master",
+    ticker_master_df,
+    "sector_clean"
+  ),
+  missingness_row(
+    "Fixed ticker master",
+    ticker_master_df,
+    "industry_clean"
+  ),
+  missingness_row(
+    "Latest market snapshot",
+    analysis_enriched_df,
+    "valid_yahoo_data",
+    function(x) !x$valid_yahoo_data
+  ),
+  missingness_row(
+    "Latest market snapshot",
+    analysis_enriched_df,
+    "market_cap",
+    function(x) !is.finite(x$market_cap) | x$market_cap <= 0
+  ),
+  missingness_row(
+    "Latest market snapshot",
+    analysis_enriched_df,
+    "reference_price",
+    function(x) !is.finite(x$reference_price) | x$reference_price <= 0
+  ),
+  missingness_row(
+    "Latest market snapshot",
+    analysis_enriched_df,
+    "historical_price_data",
+    function(x) !x$historical_data_available
+  ),
+  missingness_row(
+    "Latest market snapshot",
+    analysis_enriched_df,
+    "avg_daily_share_volume_30d",
+    function(x) !is.finite(x$avg_daily_share_volume_30d)
+  ),
+  missingness_row(
+    "Latest market snapshot",
+    analysis_enriched_df,
+    "avg_daily_dollar_volume_30d",
+    function(x) !is.finite(x$avg_daily_dollar_volume_30d)
+  ),
+  missingness_row(
+    "Analysis-eligible equity universe",
+    equity_universe_df,
+    "trailing_pe",
+    function(x) !is.finite(x$trailing_pe)
+  ),
+  missingness_row(
+    "Analysis-eligible equity universe",
+    equity_universe_df,
+    "price_to_book",
+    function(x) !is.finite(x$price_to_book)
+  )
+)
+
+consolidated_missingness_display <- consolidated_missingness |>
+  dplyr::mutate(
+    total_observations = format_count(total_observations),
+    missing_observations = format_count(missing_observations),
+    valid_observations = format_count(valid_observations),
+    missingness_rate = format_percent_1(missingness_rate)
+  )
+
+show_table(
+  consolidated_missingness_display,
+  "Consolidated data coverage and missingness"
+)
+```
+
+
+
+# Module 2: Market capitalization and liquidity distributions
+
+Market capitalization comes from the fresh Stage 2 market-cap quote when available; otherwise, Stage 2 uses fresh shares outstanding multiplied by the current reference price. 
+
+Liquidity is the mean of unadjusted close multiplied by daily share volume over the most recent `r liquidity_trading_days` valid trading observations and is reported only when at least `r minimum_valid_trading_days` observations are available.
+
+```{r}
+#| label: module2-summaries
+#| results: asis
+
+# Purpose:
+#   Measure coverage and summarize current size and recent liquidity separately
+#   for fixed S&P 500 members and the non-S&P 500 operating-company universe.
+# Inputs:
+#   equity_universe_df created from the latest Stage 2 market snapshot.
+# Outputs:
+#   Coverage and grouped distribution-summary tables for Module 2.
+
+module2_coverage <- metric_coverage_table(
+  equity_universe_df,
+  metrics = c(
+    "market_cap",
+    "avg_daily_share_volume_30d",
+    "avg_daily_dollar_volume_30d"
+  ),
+  labels = c(
+    "Current market capitalization",
+    "30-day average daily share volume",
+    "30-day average daily dollar volume"
+  )
+) |>
+  dplyr::mutate(
+    missingness_rate = format_percent_1(missingness_rate)
+  )
+
+module2_summary <- equity_universe_df |>
+  dplyr::group_by(benchmark_group) |>
+  dplyr::summarise(
+    ticker_count = dplyr::n(),
+    valid_market_cap_count = sum(is.finite(market_cap)),
+    median_market_cap = safe_median(market_cap),
+    market_cap_p25 = safe_quantile(market_cap, 0.25),
+    market_cap_p75 = safe_quantile(market_cap, 0.75),
+    market_cap_missing_rate = safe_rate(
+      sum(!is.finite(market_cap)),
+      dplyr::n()
+    ),
+    valid_liquidity_count = sum(is.finite(avg_daily_dollar_volume_30d)),
+    median_share_volume_30d = safe_median(avg_daily_share_volume_30d),
+    median_dollar_volume_30d = safe_median(avg_daily_dollar_volume_30d),
+    share_volume_missing_rate = safe_rate(
+      sum(!is.finite(avg_daily_share_volume_30d)),
+      dplyr::n()
+    ),
+    dollar_volume_missing_rate = safe_rate(
+      sum(!is.finite(avg_daily_dollar_volume_30d)),
+      dplyr::n()
+    ),
+    .groups = "drop"
+  )
+
+module2_summary_display <- module2_summary |>
+  dplyr::transmute(
+    benchmark_group,
+    ticker_count = format_count(ticker_count),
+    valid_market_cap_count = format_count(valid_market_cap_count),
+    median_market_cap = format_dollar_short(median_market_cap),
+    market_cap_p25 = format_dollar_short(market_cap_p25),
+    market_cap_p75 = format_dollar_short(market_cap_p75),
+    market_cap_missing_rate = format_percent_1(market_cap_missing_rate),
+    valid_liquidity_count = format_count(valid_liquidity_count),
+    median_share_volume_30d = format_number_short(median_share_volume_30d),
+    median_dollar_volume_30d = format_dollar_short(median_dollar_volume_30d),
+    share_volume_missing_rate = format_percent_1(share_volume_missing_rate),
+    dollar_volume_missing_rate = format_percent_1(dollar_volume_missing_rate)
+  )
+
+show_table(
+  module2_coverage,
+  "Module 2 data coverage",
+  col_names = c(
+    "Metric",
+    "Initial<br>N",
+    "Valid<br>N",
+    "Missing<br>N",
+    "Missing<br>%",
+    "S&P 500<br>Valid N",
+    "Non-S&P 500<br>Valid N"
+  )
+)
+show_table(
+  module2_summary_display,
+  "Module 2 distribution summary by benchmark group",
+  col_names = c(
+    "Benchmark<br>Group",
+    "Tickers<br>(N)",
+    "Valid Mkt<br>Cap (N)",
+    "Median<br>Mkt Cap",
+    "Mkt Cap<br>P25",
+    "Mkt Cap<br>P75",
+    "Mkt Cap<br>Missing %",
+    "Valid<br>Liquidity (N)",
+    "Median Shr<br>Vol (30d)",
+    "Median $<br>Vol (30d)",
+    "Shr Vol<br>Missing %",
+    "$ Vol<br>Missing %"
+  )
+)
+```
+
+```{r}
+#| label: fig-module2-distributions
+#| fig-width: 13
+#| fig-height: 6.2
+#| fig-cap: "Log-scale distributions of current market capitalization and 30-day average daily dollar volume."
+
+# Purpose:
+#   Compare the current size and liquidity distributions of the two benchmark
+#   groups while preserving the long right tail through logarithmic axes.
+# Inputs:
+#   equity_universe_df and the Module 2 configuration values.
+# Outputs:
+#   Two side-by-side density plots with a shared benchmark legend.
+
+market_cap_plot_data <- equity_universe_df |>
+  dplyr::filter(is.finite(market_cap), market_cap > 0)
+
+liquidity_plot_data <- equity_universe_df |>
+  dplyr::filter(
+    is.finite(avg_daily_dollar_volume_30d),
+    avg_daily_dollar_volume_30d > 0
+  )
+
+market_cap_subtitle <- paste0(
+  "Log10 scale; ",
+  scales::comma(nrow(market_cap_plot_data)),
+  " valid observations from the fresh quote snapshot."
+)
+
+liquidity_subtitle <- paste0(
+  "Log10 scale; ",
+  scales::comma(nrow(liquidity_plot_data)),
+  " valid observations; minimum history: ",
+  minimum_valid_trading_days,
+  " of the latest ",
+  liquidity_trading_days,
+  " trading days."
+)
+
+market_cap_plot <- make_density_plot(
+  data = market_cap_plot_data,
+  variable = "market_cap",
+  title = "Current market capitalization",
+  subtitle = market_cap_subtitle,
+  x_label = "Market capitalization (USD, log10 scale)",
+  caption = source_caption,
+  log10_axis = TRUE
+)
+
+liquidity_plot <- make_density_plot(
+  data = liquidity_plot_data,
+  variable = "avg_daily_dollar_volume_30d",
+  title = "30-day average daily dollar volume",
+  subtitle = liquidity_subtitle,
+  x_label = "Average daily dollar volume (USD, log10 scale)",
+  caption = source_caption,
+  log10_axis = TRUE
+)
+
+module2_combined_plot <-
+  (market_cap_plot | liquidity_plot) +
+  patchwork::plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+module2_combined_plot
+```
+
+# Module 3: Valuation profiling
+
+This section explores trailing P/E and price-to-book where available. 
+
+P/E plotting is localized to positive finite observations through 100. Price-to-book plotting is localized to positive finite observations through 20. The stored values are not winsorized; observations beyond the display bounds are counted and disclosed.
+
+```{r}
+#| label: module3-summaries
+#| results: asis
+
+# Purpose:
+#   Quantify the availability and central tendency of current valuation metrics
+#   before plotting bounded distributions.
+# Inputs:
+#   equity_universe_df from the latest market snapshot.
+# Outputs:
+#   Grouped P/E and price-to-book coverage summaries.
+
+module3_summary <- equity_universe_df |>
+  dplyr::group_by(benchmark_group) |>
+  dplyr::summarise(
+    ticker_count = dplyr::n(),
+    valid_pe_count = sum(is.finite(trailing_pe) & trailing_pe > 0),
+    pe_coverage_rate = safe_rate(valid_pe_count, dplyr::n()),
+    median_pe = safe_median(
+      trailing_pe[is.finite(trailing_pe) & trailing_pe > 0]
+    ),
+    pe_p25 = safe_quantile(
+      trailing_pe[is.finite(trailing_pe) & trailing_pe > 0],
+      0.25
+    ),
+    pe_p75 = safe_quantile(
+      trailing_pe[is.finite(trailing_pe) & trailing_pe > 0],
+      0.75
+    ),
+    pe_above_100 = sum(is.finite(trailing_pe) & trailing_pe > 100),
+    valid_price_to_book_count = sum(
+      is.finite(price_to_book) & price_to_book > 0
+    ),
+    price_to_book_coverage_rate = safe_rate(
+      valid_price_to_book_count,
+      dplyr::n()
+    ),
+    median_price_to_book = safe_median(
+      price_to_book[is.finite(price_to_book) & price_to_book > 0]
+    ),
+    price_to_book_p25 = safe_quantile(
+      price_to_book[is.finite(price_to_book) & price_to_book > 0],
+      0.25
+    ),
+    price_to_book_p75 = safe_quantile(
+      price_to_book[is.finite(price_to_book) & price_to_book > 0],
+      0.75
+    ),
+    price_to_book_above_20 = sum(
+      is.finite(price_to_book) & price_to_book > 20
+    ),
+    .groups = "drop"
+  )
+
+module3_summary_display <- module3_summary |>
+  dplyr::transmute(
+    benchmark_group,
+    ticker_count = format_count(ticker_count),
+    valid_pe_count = format_count(valid_pe_count),
+    pe_coverage_rate = format_percent_1(pe_coverage_rate),
+    median_pe = dplyr::if_else(
+      is.na(median_pe),
+      "NA",
+      scales::number(median_pe, accuracy = 0.1)
+    ),
+    pe_iqr = dplyr::if_else(
+      is.na(pe_p25) | is.na(pe_p75),
+      "NA",
+      paste0(
+        scales::number(pe_p25, accuracy = 0.1),
+        " to ",
+        scales::number(pe_p75, accuracy = 0.1)
+      )
+    ),
+    pe_above_100 = format_count(pe_above_100),
+    valid_price_to_book_count = format_count(valid_price_to_book_count),
+    price_to_book_coverage_rate = format_percent_1(
+      price_to_book_coverage_rate
+    ),
+    median_price_to_book = dplyr::if_else(
+      is.na(median_price_to_book),
+      "NA",
+      scales::number(median_price_to_book, accuracy = 0.1)
+    ),
+    price_to_book_iqr = dplyr::if_else(
+      is.na(price_to_book_p25) | is.na(price_to_book_p75),
+      "NA",
+      paste0(
+        scales::number(price_to_book_p25, accuracy = 0.1),
+        " to ",
+        scales::number(price_to_book_p75, accuracy = 0.1)
+      )
+    ),
+    price_to_book_above_20 = format_count(price_to_book_above_20)
+  )
+
+module3_coverage <- dplyr::bind_rows(
+  tibble::tibble(
+    metric = "Trailing P/E: positive finite observations",
+    initial_observations = nrow(equity_universe_df),
+    valid_observations = sum(
+      is.finite(equity_universe_df$trailing_pe) &
+        equity_universe_df$trailing_pe > 0
+    ),
+    missing_observations = sum(
+      !(is.finite(equity_universe_df$trailing_pe) &
+          equity_universe_df$trailing_pe > 0)
+    ),
+    missingness_rate = safe_rate(
+      sum(
+        !(is.finite(equity_universe_df$trailing_pe) &
+            equity_universe_df$trailing_pe > 0)
+      ),
+      nrow(equity_universe_df)
+    ),
+    sp500_valid = sum(
+      equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$trailing_pe) &
+        equity_universe_df$trailing_pe > 0
+    ),
+    broader_market_valid = sum(
+      !equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$trailing_pe) &
+        equity_universe_df$trailing_pe > 0
+    )
+  ),
+  tibble::tibble(
+    metric = "Price-to-book: positive finite observations",
+    initial_observations = nrow(equity_universe_df),
+    valid_observations = sum(
+      is.finite(equity_universe_df$price_to_book) &
+        equity_universe_df$price_to_book > 0
+    ),
+    missing_observations = sum(
+      !(is.finite(equity_universe_df$price_to_book) &
+          equity_universe_df$price_to_book > 0)
+    ),
+    missingness_rate = safe_rate(
+      sum(
+        !(is.finite(equity_universe_df$price_to_book) &
+            equity_universe_df$price_to_book > 0)
+      ),
+      nrow(equity_universe_df)
+    ),
+    sp500_valid = sum(
+      equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$price_to_book) &
+        equity_universe_df$price_to_book > 0
+    ),
+    broader_market_valid = sum(
+      !equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$price_to_book) &
+        equity_universe_df$price_to_book > 0
+    )
+  )
+) |>
+  dplyr::mutate(missingness_rate = format_percent_1(missingness_rate))
+
+show_table(
+  module3_coverage,
+  "Module 3 data coverage",
+  col_names = c(
+    "Metric",
+    "Initial<br>N",
+    "Valid<br>N",
+    "Missing<br>N",
+    "Missing<br>%",
+    "S&P 500<br>Valid N",
+    "Non-S&P 500<br>Valid N"
+  )
+)
+show_table(
+  module3_summary_display,
+  "Module 3 valuation summary by benchmark group",
+  col_names = c(
+    "Benchmark<br>Group",
+    "Tickers<br>(N)",
+    "Valid P/E<br>(N)",
+    "P/E<br>Coverage %",
+    "Median<br>P/E",
+    "P/E<br>IQR",
+    "P/E<br>>100 (N)",
+    "Valid P/B<br>(N)",
+    "P/B<br>Coverage %",
+    "Median<br>P/B",
+    "P/B<br>IQR",
+    "P/B<br>>20 (N)"
+  )
+)
+```
+
+```{r}
+#| label: fig-module3-valuations
+#| fig-width: 13
+#| fig-height: 6.2
+#| fig-cap: "Trailing P/E and price-to-book distributions using disclosed plotting bounds."
+
+# Purpose:
+#   Compare current valuation distributions while limiting display ranges that
+#   would otherwise be dominated by extreme positive ratios.
+# Inputs:
+#   equity_universe_df and the disclosed P/E and price-to-book plotting bounds.
+# Outputs:
+#   Side-by-side density plots with coverage and excluded-tail counts.
+
+pe_plot_data <- equity_universe_df |>
+  dplyr::filter(
+    is.finite(trailing_pe),
+    trailing_pe > 0,
+    trailing_pe <= 100
+  )
+
+price_to_book_plot_data <- equity_universe_df |>
+  dplyr::filter(
+    is.finite(price_to_book),
+    price_to_book > 0,
+    price_to_book <= 20
+  )
+
+pe_positive_count <- sum(
+  is.finite(equity_universe_df$trailing_pe) &
+    equity_universe_df$trailing_pe > 0
+)
+price_to_book_positive_count <- sum(
+  is.finite(equity_universe_df$price_to_book) &
+    equity_universe_df$price_to_book > 0
+)
+pe_coverage_overall <- safe_rate(
+  pe_positive_count,
+  nrow(equity_universe_df)
+)
+price_to_book_coverage_overall <- safe_rate(
+  price_to_book_positive_count,
+  nrow(equity_universe_df)
+)
+pe_above_bound <- sum(
+  is.finite(equity_universe_df$trailing_pe) &
+    equity_universe_df$trailing_pe > 100
+)
+price_to_book_above_bound <- sum(
+  is.finite(equity_universe_df$price_to_book) &
+    equity_universe_df$price_to_book > 20
+)
+
+module3_caption <- paste0(
+  "Fresh Yahoo Finance quote fields from market snapshot ",
+  market_snapshot_id,
+  ". Values outside the display bounds remain in the stored data."
+)
+
+pe_plot <- make_density_plot(
+  data = pe_plot_data,
+  variable = "trailing_pe",
+  title = "Trailing P/E ratio",
+  subtitle = paste0(
+    "Positive-finite coverage: ",
+    format_percent_1(pe_coverage_overall),
+    "; display range: 0 to 100; included: ",
+    scales::comma(nrow(pe_plot_data)),
+    "; above 100: ",
+    scales::comma(pe_above_bound),
+    "."
+  ),
+  x_label = "Trailing P/E ratio",
+  caption = module3_caption,
+  lower_bound = 0,
+  upper_bound = 100
+) +
+  scale_x_continuous(breaks = seq(0, 100, by = 20))
+
+price_to_book_plot <- make_density_plot(
+  data = price_to_book_plot_data,
+  variable = "price_to_book",
+  title = "Price-to-book ratio",
+  subtitle = paste0(
+    "Positive-finite coverage: ",
+    format_percent_1(price_to_book_coverage_overall),
+    "; display range: 0 to 20; included: ",
+    scales::comma(nrow(price_to_book_plot_data)),
+    "; above 20: ",
+    scales::comma(price_to_book_above_bound),
+    "."
+  ),
+  x_label = "Price-to-book ratio",
+  caption = module3_caption,
+  lower_bound = 0,
+  upper_bound = 20
+) +
+  scale_x_continuous(breaks = seq(0, 20, by = 5))
+
+module3_combined_plot <-
+  (pe_plot | price_to_book_plot) +
+  patchwork::plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+module3_combined_plot
+```
+
+# Module 4: Sector composition
+
+## The problem: no populated sector field
+
+Every ticker in the static universe carries an `industry_raw` value sourced from NASDAQ's own stock screener API (`api.nasdaq.com/api/screener/stocks`, retrieved via `tidyquant::tq_exchange()` in Stage 1). That same NASDAQ response also has a `sector` field, and the Stage 1 code reads it (`sector_raw <- clean_text_na(sector)`), but NASDAQ currently returns that field empty for every one of the 5,500 records in this build. The S&P 500 constituent source used in Stage 1 likewise has no populated sector column. So `sector_raw`, `sp500_sector_raw`, and the derived `sector_clean`/`sector_display` columns are unusable: every record shows `"Unclassified"`.
+
+`industry_raw` itself is populated for 5,400 of 5,500 tickers, but at a granular level: 152 distinct labels (e.g., "Major Banks," "EDP Services," "Biotechnology: Pharmaceutical Preparations") that are too numerous to summarize directly in one table or chart.
+
+## The solution: a hand-built crosswalk to a legacy NASDAQ screener sector scheme
+
+`industry_raw` follows a long-standing, static industry taxonomy that natively groups its industries into 12 parent sectors: Basic Industries, Capital Goods, Consumer Durables, Consumer Non-Durables, Consumer Services, Energy, Finance, Health Care, Miscellaneous, Public Utilities, Technology, and Transportation. This exact 12-sector filter list is documented on [NASDAQ's own legacy stock screener](https://www.nasdaq.com/screening/companies-by-industry.aspx?industry=Consumer+Durable). The 12-sector scheme is often informally attributed to Zacks Investment Research, which has historically supplied industry classification data to NASDAQ's screener; however, Zacks' *current*, publicly documented classification uses 16 sectors (63 medium industries, 289 expanded industries), not 12, so that attribution should be read as historical lineage rather than a live, maintained Zacks product. This is **not** the 11-sector GICS scheme used by S&P/MSCI either; there is no free, licensable crosswalk from this taxonomy to GICS. Reconstructing this legacy scheme's own native sector groupings is the closer, more defensible option, since it matches the scheme that actually produced `industry_raw`.
+
+Because NASDAQ no longer returns this sector field, the 152 industry-to-sector assignments below were hand-built from general knowledge of this classification rather than pulled live from an authoritative source. Assignments for unambiguous industries (e.g., "Major Banks" -> Finance, "Semiconductors" -> Technology) are high-confidence. A minority of labels required a judgment call, most notably:
+
+- Broadcasting-adjacent industries (`Broadcasting`, `Cable & Other Pay Television Services`) are grouped under **Public Utilities**, following this taxonomy's historical practice of grouping communications with utilities, while equipment *manufacturers* for those services (e.g., `Radio And Television Broadcasting And Communications Equipment`) are grouped under **Technology**.
+- Explicit catch-all labels (`Miscellaneous`, `Miscellaneous manufacturing industries`, `Multi-Sector Companies`, `Durable Goods`, `Consumer Specialties`) are grouped under **Miscellaneous** rather than forced into a more specific sector.
+- `Blank Checks` (SPAC shells) and `Building operators` are grouped under **Finance**, consistent with how this taxonomy treats finance vehicles and real-property operators.
+
+The full mapping is stored at [reference/industry_sector_map.csv](reference/industry_sector_map.csv) as a plain, hand-edited, version-controlled lookup table (`industry_raw`, `sector_native`) — not a timestamped Stage 1/Stage 2 pipeline output, since it is a fixed classification rule rather than a live data pull. Any later module that needs a sector label should read this same file rather than re-deriving one, and any correction should be made by editing that file directly. The code below checks, on every render, whether the current `industry_raw` values are still fully covered by the mapping and reports any gap rather than silently dropping unmapped industries.
+
+```{r}
+#| label: module4-mapping
+#| results: asis
+
+# Purpose:
+#   Load the hand-built industry-to-native-sector crosswalk, join it to the
+#   analysis-eligible universe, and disclose any coverage gap between the
+#   current industry_raw values and the stored mapping.
+# Inputs:
+#   equity_universe_df (Stage 2 market snapshot) and the version-controlled
+#   reference/industry_sector_map.csv crosswalk.
+# Outputs:
+#   equity_universe_df with an added sector_native column, plus
+#   module4_mapping_df for reuse by later modules and a coverage disclosure.
+
+sector_native_levels <- c(
+  "Technology", "Health Care", "Finance", "Consumer Services",
+  "Consumer Non-Durables", "Consumer Durables", "Capital Goods",
+  "Basic Industries", "Energy", "Transportation", "Public Utilities",
+  "Miscellaneous"
+)
+
+mapping_path <- file.path(
+  project_directory, "Topics", "YahooFinanceEDA", "reference",
+  "industry_sector_map.csv"
+)
+
+if (!file.exists(mapping_path)) {
+  stop(
+    paste0(
+      "The industry-to-sector reference file is missing: ", mapping_path,
+      ". Module 4 cannot run without it."
+    ),
+    call. = FALSE
+  )
+}
+
+module4_mapping_df <- readr::read_csv(
+  mapping_path,
+  col_types = readr::cols(
+    industry_raw = readr::col_character(),
+    sector_native = readr::col_character()
+  )
+)
+
+unmapped_industries <- equity_universe_df |>
+  dplyr::filter(!is.na(industry_raw)) |>
+  dplyr::distinct(industry_raw) |>
+  dplyr::anti_join(module4_mapping_df, by = "industry_raw")
+
+if (nrow(unmapped_industries) > 0L) {
+  cat(
+    paste0(
+      "**Coverage warning:** ", nrow(unmapped_industries),
+      " industry label(s) in the current snapshot are not yet in the ",
+      "reference mapping and will be treated as \"Unclassified\": ",
+      paste(unmapped_industries$industry_raw, collapse = "; "), "."
+    )
+  )
+}
+
+equity_universe_df <- equity_universe_df |>
+  dplyr::left_join(module4_mapping_df, by = "industry_raw") |>
+  dplyr::mutate(
+    sector_native = dplyr::if_else(
+      is.na(industry_raw), NA_character_,
+      dplyr::coalesce(sector_native, "Unclassified")
+    ),
+    sector_native = factor(
+      sector_native,
+      levels = c(sector_native_levels, "Unclassified")
+    )
+  )
+
+module4_missing_industry <- equity_universe_df |>
+  dplyr::filter(is.na(industry_raw)) |>
+  dplyr::group_by(benchmark_group) |>
+  dplyr::summarise(
+    excluded_tickers = dplyr::n(),
+    excluded_market_cap = sum(market_cap, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+
+## Industry-to-sector crosswalk reference
+
+The table below prints the full `industry_sector_map.csv` crosswalk (152 industry rows) with two columns appended: how many tickers currently carrying each `industry_raw` label are S&P 500 constituents versus not, among analysis-eligible tickers in the latest market snapshot. Industries with zero current tickers in a group (including industries with no tickers at all in the present snapshot) show `0` rather than being dropped, since the crosswalk itself is a fixed reference file independent of any single snapshot's coverage. A bolded **Sector total** row follows each sector's industries, and a final **All sectors — total** row closes the table; both are computed by summing the industry-level counts shown, so they reconcile exactly with the detail rows above them.
+
+```{r}
+#| label: module4-crosswalk-reference
+#| results: asis
+
+# Purpose:
+#   Print the full hand-built industry_sector_map.csv crosswalk with current
+#   S&P 500 and Non-S&P 500 ticker counts appended per industry_raw label,
+#   plus a sector-level subtotal row after each sector and a grand-total
+#   footer row.
+# Inputs:
+#   module4_mapping_df (the crosswalk loaded in module4-mapping) and
+#   equity_universe_df (current analysis-eligible tickers with benchmark_group).
+# Outputs:
+#   module4_crosswalk_display, a reference table with 152 industry rows plus
+#   12 sector-total rows and 1 grand-total row (165 rows total).
+
+module4_crosswalk_counts <- equity_universe_df |>
+  dplyr::filter(!is.na(industry_raw)) |>
+  dplyr::group_by(industry_raw) |>
+  dplyr::summarise(
+    sp500_count = sum(benchmark_group == "S&P 500", na.rm = TRUE),
+    non_sp500_count = sum(benchmark_group == "Non-S&P 500", na.rm = TRUE),
+    .groups = "drop"
+  )
+
+module4_industry_counts <- module4_mapping_df |>
+  dplyr::left_join(module4_crosswalk_counts, by = "industry_raw") |>
+  dplyr::mutate(
+    sp500_count = tidyr::replace_na(sp500_count, 0L),
+    non_sp500_count = tidyr::replace_na(non_sp500_count, 0L),
+    is_summary_row = FALSE
+  )
+
+module4_sector_totals <- module4_industry_counts |>
+  dplyr::group_by(sector_native) |>
+  dplyr::summarise(
+    sp500_count = sum(sp500_count),
+    non_sp500_count = sum(non_sp500_count),
+    .groups = "drop"
+  ) |>
+  dplyr::mutate(
+    industry_raw = "<strong>Sector total</strong>",
+    is_summary_row = TRUE
+  )
+
+module4_grand_total <- tibble::tibble(
+  industry_raw = "<strong>All sectors \u2014 total</strong>",
+  sector_native = NA_character_,
+  sp500_count = sum(module4_industry_counts$sp500_count),
+  non_sp500_count = sum(module4_industry_counts$non_sp500_count),
+  is_summary_row = TRUE
+)
+
+module4_crosswalk_display <- dplyr::bind_rows(
+    module4_industry_counts,
+    module4_sector_totals
+  ) |>
+  dplyr::arrange(
+    match(sector_native, sector_native_levels),
+    is_summary_row,
+    industry_raw
+  ) |>
+  dplyr::bind_rows(module4_grand_total) |>
+  dplyr::transmute(
+    industry_raw,
+    sector_native = dplyr::coalesce(sector_native, ""),
+    sp500_count = format_count(sp500_count),
+    non_sp500_count = format_count(non_sp500_count)
+  )
+
+show_table(
+  module4_crosswalk_display,
+  "Module 4 industry-to-sector crosswalk (reference/industry_sector_map.csv) with current ticker counts by benchmark group, including sector subtotal and grand-total rows",
+  col_names = c(
+    "Industry (raw)", "Sector (native)", "S&P 500<br>Tickers (N)",
+    "Non-S&P 500<br>Tickers (N)"
+  )
+)
+```
+
+
+## Composition of the broad market versus the S&P 500
+
+Tickers with no `industry_raw` value (`r scales::comma(sum(is.na(equity_universe_df$industry_raw)))` of `r scales::comma(nrow(equity_universe_df))` analysis-eligible tickers) are excluded from both composition charts below rather than folded into an "Unclassified" bar, per the disclosed exclusion counts in the coverage table. Market-cap-weighted composition additionally excludes tickers with a missing or non-positive current market-cap value.
+
+```{r}
+#| label: module4-summaries
+#| results: asis
+
+# Purpose:
+#   Build market-cap-weighted and count-based sector composition tables for
+#   each benchmark group, and disclose the tickers excluded from each.
+# Inputs:
+#   equity_universe_df with the sector_native column added above.
+# Outputs:
+#   module4_cap_composition, module4_count_composition, and a coverage table.
+
+module4_cap_base <- equity_universe_df |>
+  dplyr::filter(!is.na(industry_raw), is.finite(market_cap), market_cap > 0)
+
+module4_count_base <- equity_universe_df |>
+  dplyr::filter(!is.na(industry_raw))
+
+module4_cap_composition <- module4_cap_base |>
+  dplyr::group_by(benchmark_group, sector_native, .drop = FALSE) |>
+  dplyr::summarise(sector_cap = sum(market_cap), .groups = "drop") |>
+  dplyr::group_by(benchmark_group) |>
+  dplyr::mutate(pct_market_cap = 100 * sector_cap / sum(sector_cap)) |>
+  dplyr::ungroup()
+
+module4_count_composition <- module4_count_base |>
+  dplyr::group_by(benchmark_group, sector_native, .drop = FALSE) |>
+  dplyr::summarise(sector_count = dplyr::n(), .groups = "drop") |>
+  dplyr::group_by(benchmark_group) |>
+  dplyr::mutate(pct_count = 100 * sector_count / sum(sector_count)) |>
+  dplyr::ungroup()
+
+module4_coverage <- dplyr::bind_rows(
+  tibble::tibble(
+    metric = "Excluded: no industry_raw",
+    benchmark_group = module4_missing_industry$benchmark_group,
+    excluded_tickers = module4_missing_industry$excluded_tickers,
+    excluded_market_cap = module4_missing_industry$excluded_market_cap
+  ),
+  module4_cap_base |>
+    dplyr::group_by(benchmark_group) |>
+    dplyr::summarise(
+      metric = "Included in cap-weighted composition",
+      excluded_tickers = dplyr::n(),
+      excluded_market_cap = sum(market_cap),
+      .groups = "drop"
+    )
+) |>
+  dplyr::transmute(
+    metric,
+    benchmark_group,
+    tickers = format_count(excluded_tickers),
+    market_cap = scales::dollar(
+      excluded_market_cap, scale = 1e-9, suffix = "B", accuracy = 0.1
+    )
+  )
+
+show_table(
+  module4_coverage,
+  "Module 4 exclusion and coverage disclosure",
+  col_names = c("Metric", "Benchmark Group", "Tickers (N)", "Market Cap")
+)
+```
+
+```{r}
+#| label: fig-module4-sector-composition
+#| fig-width: 13
+#| fig-height: 7.5
+#| fig-cap: "Sector composition of the S&P 500 versus the non-S&P 500 listed market, weighted by market capitalization and by ticker count."
+
+# Purpose:
+#   Compare sector composition between benchmark groups on two metrics so
+#   that differences driven by a few very large companies (cap-weighted) can
+#   be distinguished from differences in how many companies operate in each
+#   sector (count-based).
+# Inputs:
+#   module4_cap_composition and module4_count_composition.
+# Outputs:
+#   Two horizontal bar charts, faceted by benchmark group, arranged side by
+#   side with a shared sector ordering.
+
+sector_order <- module4_cap_composition |>
+  dplyr::group_by(sector_native) |>
+  dplyr::summarise(total_cap = sum(sector_cap), .groups = "drop") |>
+  dplyr::arrange(total_cap) |>
+  dplyr::pull(sector_native)
+
+module4_cap_plot_data <- module4_cap_composition |>
+  dplyr::mutate(sector_native = factor(sector_native, levels = sector_order))
+
+module4_count_plot_data <- module4_count_composition |>
+  dplyr::mutate(sector_native = factor(sector_native, levels = sector_order))
+
+module4_cap_plot <- ggplot(
+  module4_cap_plot_data,
+  aes(x = pct_market_cap, y = sector_native)
+) +
+  geom_col(fill = "#123B66", width = 0.72) +
+  facet_wrap(vars(benchmark_group), ncol = 2) +
+  scale_x_continuous(
+    labels = scales::label_number(suffix = "%"),
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  labs(
+    title = "By market capitalization",
+    x = "Share of group market cap",
+    y = NULL
+  )
+
+module4_count_plot <- ggplot(
+  module4_count_plot_data,
+  aes(x = pct_count, y = sector_native)
+) +
+  geom_col(fill = "#667480", width = 0.72) +
+  facet_wrap(vars(benchmark_group), ncol = 2) +
+  scale_x_continuous(
+    labels = scales::label_number(suffix = "%"),
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  labs(
+    title = "By ticker count",
+    x = "Share of group ticker count",
+    y = NULL
+  )
+
+module4_combined_plot <- (module4_cap_plot / module4_count_plot) +
+  patchwork::plot_annotation(
+    caption = paste0(
+      "Sector labels reconstructed from the native NASDAQ/Zacks industry ",
+      "taxonomy (see reference/industry_sector_map.csv); this is not GICS. ",
+      source_caption
+    )
+  )
+
+module4_combined_plot
+```
+
+# Module 5: Earnings per share by sector
+
+This module compares trailing twelve-month (TTM) and forward earnings per share across the 12 native NASDAQ/Zacks sectors developed in Module 4, split by S&P 500 membership. The EPS fields were added to the Stage 2 `quantmod::getQuote()` call (`epsTrailingTwelveMonths` and `epsForward` from Yahoo's `v7/finance/quote` endpoint), using the same batched, retried fetch infrastructure as the existing quote fields. Both measures are per-share, not aggregated: trailing EPS reflects reported earnings over the last four quarters; forward EPS reflects the consensus analyst estimate for the next twelve months.
+
+Because the underlying company sizes differ enormously between the two benchmark groups, each panel uses its own x-axis scale (`scales = "free_x"`). This makes within-group sector comparisons readable but means bar lengths are **not** comparable across panels — read the axis labels, not the visual bar widths, when comparing S&P 500 to Non-S&P 500.
+
+```{r}
+#| label: module5-eps-data
+#| results: asis
+
+# Purpose:
+#   Load supplemental EPS data from the Stage 2 quote snapshot (or, when the
+#   snapshot predates the addition of EPS fields, from a lightweight in-session
+#   fetch), join sector labels, and compute median trailing and forward EPS by
+#   sector and benchmark group.
+# Inputs:
+#   equity_universe_df with sector_native (Module 4) and EPS quote fields.
+# Outputs:
+#   module5_ttm_summary, module5_fwd_summary, and coverage disclosures.
+
+eps_fields_present <- all(
+  c("eps_trailing_ttm", "eps_forward") %in% names(equity_universe_df)
+)
+
+if (!eps_fields_present) {
+  stop(
+    paste0(
+      "EPS columns (eps_trailing_ttm, eps_forward) not found in ",
+      "equity_universe_df. Re-run Stage 2 with the updated quote_fields ",
+      "or perform a supplemental EPS fetch before rendering."
+    ),
+    call. = FALSE
+  )
+}
+
+module5_base <- equity_universe_df |>
+  dplyr::filter(!is.na(sector_native), sector_native != "Unclassified")
+
+module5_ttm_summary <- module5_base |>
+  dplyr::filter(is.finite(eps_trailing_ttm)) |>
+  dplyr::group_by(benchmark_group, sector_native) |>
+  dplyr::summarise(
+    median_eps = median(eps_trailing_ttm),
+    ticker_count = dplyr::n(),
+    .groups = "drop"
+  )
+
+module5_fwd_summary <- module5_base |>
+  dplyr::filter(is.finite(eps_forward)) |>
+  dplyr::group_by(benchmark_group, sector_native) |>
+  dplyr::summarise(
+    median_eps = median(eps_forward),
+    ticker_count = dplyr::n(),
+    .groups = "drop"
+  )
+
+module5_coverage <- dplyr::bind_rows(
+  module5_base |>
+    dplyr::group_by(benchmark_group) |>
+    dplyr::summarise(
+      metric = "Trailing EPS (TTM)",
+      total_tickers = dplyr::n(),
+      valid_tickers = sum(is.finite(eps_trailing_ttm)),
+      .groups = "drop"
+    ),
+  module5_base |>
+    dplyr::group_by(benchmark_group) |>
+    dplyr::summarise(
+      metric = "Forward EPS",
+      total_tickers = dplyr::n(),
+      valid_tickers = sum(is.finite(eps_forward)),
+      .groups = "drop"
+    )
+) |>
+  dplyr::mutate(
+    coverage_rate = format_percent_1(safe_rate(valid_tickers, total_tickers)),
+    total_tickers = format_count(total_tickers),
+    valid_tickers = format_count(valid_tickers)
+  )
+
+show_table(
+  module5_coverage,
+  "Module 5 EPS data coverage",
+  col_names = c(
+    "EPS Metric", "Benchmark Group", "Total<br>Tickers",
+    "Valid EPS<br>(N)", "Coverage<br>%"
+  )
+)
+```
+
+```{r}
+#| label: fig-module5-forward-eps
+#| fig-width: 13
+#| fig-height: 6.5
+#| fig-cap: "Median forward EPS by sector, S&P 500 versus Non-S&P 500."
+
+# Purpose:
+#   Compare the median analyst-consensus forward EPS across sectors between
+#   the two benchmark groups.
+# Inputs:
+#   module5_fwd_summary from the preceding chunk.
+# Outputs:
+#   Horizontal bar chart faceted by benchmark group.
+
+module5_sector_order <- module5_fwd_summary |>
+  dplyr::group_by(sector_native) |>
+  dplyr::summarise(overall = median(median_eps), .groups = "drop") |>
+  dplyr::arrange(overall) |>
+  dplyr::pull(sector_native)
+
+ggplot(
+  module5_fwd_summary |>
+    dplyr::mutate(sector_native = factor(sector_native, levels = module5_sector_order)),
+  aes(x = median_eps, y = sector_native)
+) +
+  geom_col(fill = "#123B66", width = 0.72) +
+  facet_wrap(vars(benchmark_group), ncol = 2, scales = "free_x") +
+  scale_x_continuous(labels = scales::dollar_format(prefix = "$")) +
+  labs(
+    title = "Median forward EPS by sector",
+    subtitle = paste0(
+      "Forward EPS reflects the consensus analyst estimate for the next ",
+      "twelve months; tickers with missing forward EPS are excluded."
+    ),
+    x = "Median forward EPS",
+    y = NULL,
+    caption = source_caption
+  )
+```
+
+```{r}
+#| label: fig-module5-trailing-eps
+#| fig-width: 13
+#| fig-height: 6.5
+#| fig-cap: "Median trailing twelve-month EPS by sector, S&P 500 versus Non-S&P 500."
+
+# Purpose:
+#   Compare the median trailing twelve-month EPS across sectors between
+#   the two benchmark groups.
+# Inputs:
+#   module5_ttm_summary from the data chunk.
+# Outputs:
+#   Horizontal bar chart faceted by benchmark group.
+
+ggplot(
+  module5_ttm_summary |>
+    dplyr::mutate(sector_native = factor(sector_native, levels = module5_sector_order)),
+  aes(x = median_eps, y = sector_native)
+) +
+  geom_col(fill = "#667480", width = 0.72) +
+  facet_wrap(vars(benchmark_group), ncol = 2, scales = "free_x") +
+  scale_x_continuous(labels = scales::dollar_format(prefix = "$")) +
+  labs(
+    title = "Median trailing twelve-month EPS by sector",
+    subtitle = paste0(
+      "Trailing EPS reflects reported earnings over the last four quarters; ",
+      "tickers with missing trailing EPS are excluded."
+    ),
+    x = "Median trailing EPS (TTM)",
+    y = NULL,
+    caption = source_caption
+  )
+```
+
+# Module 6: 52-week trailing return by sector
+
+This module compares the trailing 52-week total price return across the 12 native NASDAQ/Zacks sectors developed in Module 4, split by S&P 500 membership. The return field was added to the Stage 2 `quantmod::getQuote()` call (`fiftyTwoWeekChangePercent`, alongside `fiftyTwoWeekHigh` and `fiftyTwoWeekLow`, from Yahoo's `v7/finance/quote` endpoint), using the same batched, retried fetch infrastructure as the existing quote fields. The value is Yahoo's own trailing 52-week percentage price change and is not adjusted for dividends.
+
+```{r}
+#| label: module6-return-data
+#| results: asis
+
+# Purpose:
+#   Confirm the Stage 2 52-week return field is present, join sector labels,
+#   and compute median 52-week return by sector and benchmark group.
+# Inputs:
+#   equity_universe_df with sector_native (Module 4) and return_52_week_pct
+#   from the Stage 2 quote snapshot.
+# Outputs:
+#   module6_summary and a coverage disclosure.
+
+return_field_present <- "return_52_week_pct" %in% names(equity_universe_df)
+
+if (!return_field_present) {
+  stop(
+    paste0(
+      "return_52_week_pct not found in equity_universe_df. Re-run Stage 2 ",
+      "with the updated quote_fields before rendering."
+    ),
+    call. = FALSE
+  )
+}
+
+module6_base <- equity_universe_df |>
+  dplyr::filter(!is.na(sector_native), sector_native != "Unclassified")
+
+module6_summary <- module6_base |>
+  dplyr::filter(is.finite(return_52_week_pct)) |>
+  dplyr::group_by(benchmark_group, sector_native) |>
+  dplyr::summarise(
+    median_return = median(return_52_week_pct),
+    ticker_count = dplyr::n(),
+    .groups = "drop"
+  )
+
+module6_coverage <- module6_base |>
+  dplyr::group_by(benchmark_group) |>
+  dplyr::summarise(
+    metric = "52-week return",
+    total_tickers = dplyr::n(),
+    valid_tickers = sum(is.finite(return_52_week_pct)),
+    .groups = "drop"
+  ) |>
+  dplyr::mutate(
+    coverage_rate = format_percent_1(safe_rate(valid_tickers, total_tickers)),
+    total_tickers = format_count(total_tickers),
+    valid_tickers = format_count(valid_tickers)
+  )
+
+show_table(
+  module6_coverage,
+  "Module 6 52-week return data coverage",
+  col_names = c(
+    "Metric", "Benchmark Group", "Total<br>Tickers",
+    "Valid Return<br>(N)", "Coverage<br>%"
+  )
+)
+```
+
+```{r}
+#| label: fig-module6-return-by-sector
+#| fig-width: 13
+#| fig-height: 6.5
+#| fig-cap: "Median trailing 52-week price return by sector, S&P 500 versus Non-S&P 500."
+
+# Purpose:
+#   Compare the median trailing 52-week price return across sectors between
+#   the two benchmark groups.
+# Inputs:
+#   module6_summary from the preceding chunk.
+# Outputs:
+#   Horizontal bar chart faceted by benchmark group, with a reference line
+#   at zero return.
+
+module6_sector_order <- module6_summary |>
+  dplyr::group_by(sector_native) |>
+  dplyr::summarise(overall = median(median_return), .groups = "drop") |>
+  dplyr::arrange(overall) |>
+  dplyr::pull(sector_native)
+
+ggplot(
+  module6_summary |>
+    dplyr::mutate(sector_native = factor(sector_native, levels = module6_sector_order)),
+  aes(x = median_return, y = sector_native)
+) +
+  geom_col(fill = "#123B66", width = 0.72) +
+  geom_vline(xintercept = 0, linewidth = 0.4, color = "grey40") +
+  facet_wrap(vars(benchmark_group), ncol = 2, scales = "free_x") +
+  scale_x_continuous(labels = scales::label_number(suffix = "%")) +
+  labs(
+    title = "Median trailing 52-week return by sector",
+    subtitle = paste0(
+      "Yahoo's trailing 52-week price return, not adjusted for dividends; ",
+      "tickers with missing values are excluded."
+    ),
+    x = "Median 52-week return",
+    y = NULL,
+    caption = source_caption
+  )
+```
+
+```{r}
+#| label: fig-module6-return-distribution
+#| fig-width: 13
+#| fig-height: 6.2
+#| fig-cap: "Distribution of trailing 52-week price return, bounded to -75% to 200% for readability."
+
+# Purpose:
+#   Show the overall shape of the 52-week return distribution for each
+#   benchmark group, since the median-by-sector chart above hides dispersion.
+# Inputs:
+#   module6_base with return_52_week_pct.
+# Outputs:
+#   A single density plot comparing S&P 500 to Non-S&P 500.
+
+module6_return_plot_data <- module6_base |>
+  dplyr::filter(is.finite(return_52_week_pct))
+
+module6_return_above_bound <- sum(
+  module6_return_plot_data$return_52_week_pct > 200
+)
+module6_return_below_bound <- sum(
+  module6_return_plot_data$return_52_week_pct < -75
+)
+
+make_density_plot(
+  data = module6_return_plot_data,
+  variable = "return_52_week_pct",
+  title = "Trailing 52-week return distribution",
+  subtitle = paste0(
+    "Display range: -75% to 200%; ",
+    scales::comma(module6_return_below_bound),
+    " below, ",
+    scales::comma(module6_return_above_bound),
+    " above (values remain in the stored data)."
+  ),
+  x_label = "Trailing 52-week return",
+  caption = source_caption,
+  lower_bound = -75,
+  upper_bound = 200
+) +
+  scale_x_continuous(labels = scales::label_number(suffix = "%"))
+```
+
+# Module 7: Return performance by sector and benchmark group
+
+This module computes simple net returns $P_t / P_{t-n} - 1$ — over 1-, 5-, 20-, and 60-trading-day horizons using Yahoo's dividend-and-split-adjusted close (`adjusted` in `price_history_df`), plus the standard deviation, skewness, and (excess) kurtosis of each ticker's daily returns. All horizon and dispersion figures below are equal-weighted means of ticker-level values, not portfolio or index-level returns.
+
+
+```{r}
+#| label: module7-return-data
+#| results: asis
+
+# Purpose:
+#   Compute simple net returns over 1-, 5-, 20-, and 60-trading-day horizons
+#   and daily-return dispersion statistics (sd, skewness, excess kurtosis) for
+#   every analysis-eligible ticker, using dividend/split-adjusted close.
+# Inputs:
+#   price_history_df (Stage 2 daily prices) restricted to the tickers in
+#   equity_universe_df, which carries sector_native (Module 4) and
+#   benchmark_group.
+# Outputs:
+#   module7_symbol_df (one row per ticker) and a data-coverage table.
+
+safe_skewness <- function(x) {
+  n <- length(x)
+  centered <- x - mean(x)
+  (sum(centered^3) / n) / (stats::sd(x)^3)
+}
+
+safe_excess_kurtosis <- function(x) {
+  n <- length(x)
+  centered <- x - mean(x)
+  (sum(centered^4) / n) / (stats::sd(x)^4) - 3
+}
+
+# A minimum number of daily observations before trusting sd/skewness/kurtosis;
+# these higher moments are unstable with very few points.
+minimum_daily_obs_for_moments <- 20L
+
+module7_price_base <- price_history_df |>
+  dplyr::semi_join(
+    dplyr::filter(equity_universe_df, analysis_eligible),
+    by = "symbol_yahoo"
+  ) |>
+  dplyr::filter(is.finite(adjusted), adjusted > 0) |>
+  dplyr::arrange(symbol_yahoo, date)
+
+module7_daily_returns <- module7_price_base |>
+  dplyr::group_by(symbol_yahoo) |>
+  dplyr::mutate(daily_return = adjusted / dplyr::lag(adjusted) - 1) |>
+  dplyr::ungroup() |>
+  dplyr::filter(is.finite(daily_return))
+
+module7_horizon_returns <- module7_price_base |>
+  dplyr::arrange(symbol_yahoo, dplyr::desc(date)) |>
+  dplyr::group_by(symbol_yahoo) |>
+  dplyr::summarise(
+    n_price_obs = dplyr::n(),
+    ret_1d  = if (dplyr::n() >= 2)  adjusted[1] / adjusted[2]  - 1 else NA_real_,
+    ret_5d  = if (dplyr::n() >= 6)  adjusted[1] / adjusted[6]  - 1 else NA_real_,
+    ret_20d = if (dplyr::n() >= 21) adjusted[1] / adjusted[21] - 1 else NA_real_,
+    ret_60d = if (dplyr::n() >= 61) adjusted[1] / adjusted[61] - 1 else NA_real_,
+    .groups = "drop"
+  )
+
+module7_daily_stats <- module7_daily_returns |>
+  dplyr::group_by(symbol_yahoo) |>
+  dplyr::summarise(
+    n_daily_returns = dplyr::n(),
+    sd_daily_return = if (dplyr::n() >= minimum_daily_obs_for_moments) {
+      stats::sd(daily_return)
+    } else {
+      NA_real_
+    },
+    skew_daily_return = if (dplyr::n() >= minimum_daily_obs_for_moments) {
+      safe_skewness(daily_return)
+    } else {
+      NA_real_
+    },
+    kurt_daily_return = if (dplyr::n() >= minimum_daily_obs_for_moments) {
+      safe_excess_kurtosis(daily_return)
+    } else {
+      NA_real_
+    },
+    .groups = "drop"
+  )
+
+module7_symbol_df <- equity_universe_df |>
+  dplyr::filter(analysis_eligible) |>
+  dplyr::select(symbol_yahoo, sector_native, benchmark_group) |>
+  dplyr::left_join(module7_horizon_returns, by = "symbol_yahoo") |>
+  dplyr::left_join(module7_daily_stats, by = "symbol_yahoo")
+
+module7_coverage <- tibble::tibble(
+  metric = c(
+    "1-day return", "5-day return", "20-day return", "60-day return",
+    "Daily-return std. deviation", "Daily-return skewness",
+    "Daily-return excess kurtosis"
+  ),
+  initial_observations = nrow(module7_symbol_df),
+  valid_observations = c(
+    sum(is.finite(module7_symbol_df$ret_1d)),
+    sum(is.finite(module7_symbol_df$ret_5d)),
+    sum(is.finite(module7_symbol_df$ret_20d)),
+    sum(is.finite(module7_symbol_df$ret_60d)),
+    sum(is.finite(module7_symbol_df$sd_daily_return)),
+    sum(is.finite(module7_symbol_df$skew_daily_return)),
+    sum(is.finite(module7_symbol_df$kurt_daily_return))
+  )
+) |>
+  dplyr::mutate(
+    missing_observations = initial_observations - valid_observations#,
+    #missingness_rate = format_percent_1(
+      #safe_rate(missing_observations, initial_observations)
+    #)
+  )
+
+show_table(
+  module7_coverage,
+  "Module 7 data coverage",
+  col_names = c(
+    "Metric", "Initial<br>N", "Valid<br>N", "Missing<br>N")#, "Missing<br>%"
+  #)
+)
+```
+
+## Sector-level performance table
+
+```{r}
+#| label: module7-sector-table
+#| results: asis
+
+# Purpose:
+#   Summarize equal-weighted mean horizon returns and daily-return dispersion
+#   statistics for each native sector.
+# Inputs:
+#   module7_symbol_df.
+# Outputs:
+#   module7_sector_table, displayed with formatted percentages.
+
+module7_sector_table <- module7_symbol_df |>
+  dplyr::filter(!is.na(sector_native), sector_native != "Unclassified") |>
+  dplyr::group_by(sector_native) |>
+  dplyr::summarise(
+    ticker_count = dplyr::n(),
+    mean_ret_1d = mean(ret_1d, na.rm = TRUE),
+    mean_ret_5d = mean(ret_5d, na.rm = TRUE),
+    mean_ret_20d = mean(ret_20d, na.rm = TRUE),
+    mean_ret_60d = mean(ret_60d, na.rm = TRUE),
+    mean_sd_daily = mean(sd_daily_return, na.rm = TRUE),
+    mean_skew_daily = mean(skew_daily_return, na.rm = TRUE),
+    mean_kurt_daily = mean(kurt_daily_return, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(dplyr::desc(mean_ret_60d))
+
+module7_sector_table_display <- module7_sector_table |>
+  dplyr::transmute(
+    sector_native,
+    ticker_count = format_count(ticker_count),
+    mean_ret_1d = format_percent_1(mean_ret_1d),
+    mean_ret_5d = format_percent_1(mean_ret_5d),
+    mean_ret_20d = format_percent_1(mean_ret_20d),
+    mean_ret_60d = format_percent_1(mean_ret_60d),
+    mean_sd_daily = format_percent_1(mean_sd_daily),
+    mean_skew_daily = scales::number(mean_skew_daily, accuracy = 0.01),
+    mean_kurt_daily = scales::number(mean_kurt_daily, accuracy = 0.01)
+  )
+
+show_table(
+  module7_sector_table_display,
+  "Module 7 return performance by sector (equal-weighted means of ticker-level values)",
+  col_names = c(
+    "Sector", "Tickers<br>(N)", "1-Day<br>Return", "5-Day<br>Return",
+    "20-Day<br>Return", "60-Day<br>Return", "Std Dev<br>(Daily)",
+    "Skewness<br>(Daily)", "Kurtosis<br>(Daily, excess)"
+  )
+)
+```
+
+## S&P 500 versus Non-S&P 500 performance table
+
+```{r}
+#| label: module7-benchmark-table
+#| results: asis
+
+# Purpose:
+#   Summarize the same equal-weighted return and dispersion statistics split
+#   by S&P 500 membership rather than sector.
+# Inputs:
+#   module7_symbol_df.
+# Outputs:
+#   module7_benchmark_table, displayed with formatted percentages.
+
+module7_benchmark_table <- module7_symbol_df |>
+  dplyr::group_by(benchmark_group) |>
+  dplyr::summarise(
+    ticker_count = dplyr::n(),
+    mean_ret_1d = mean(ret_1d, na.rm = TRUE),
+    mean_ret_5d = mean(ret_5d, na.rm = TRUE),
+    mean_ret_20d = mean(ret_20d, na.rm = TRUE),
+    mean_ret_60d = mean(ret_60d, na.rm = TRUE),
+    mean_sd_daily = mean(sd_daily_return, na.rm = TRUE),
+    mean_skew_daily = mean(skew_daily_return, na.rm = TRUE),
+    mean_kurt_daily = mean(kurt_daily_return, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+module7_benchmark_table_display <- module7_benchmark_table |>
+  dplyr::transmute(
+    benchmark_group,
+    ticker_count = format_count(ticker_count),
+    mean_ret_1d = format_percent_1(mean_ret_1d),
+    mean_ret_5d = format_percent_1(mean_ret_5d),
+    mean_ret_20d = format_percent_1(mean_ret_20d),
+    mean_ret_60d = format_percent_1(mean_ret_60d),
+    mean_sd_daily = format_percent_1(mean_sd_daily),
+    mean_skew_daily = scales::number(mean_skew_daily, accuracy = 0.01),
+    mean_kurt_daily = scales::number(mean_kurt_daily, accuracy = 0.01)
+  )
+
+show_table(
+  module7_benchmark_table_display,
+  "Module 7 return performance by benchmark group (equal-weighted means of ticker-level values)",
+  col_names = c(
+    "Benchmark<br>Group", "Tickers<br>(N)", "1-Day<br>Return",
+    "5-Day<br>Return", "20-Day<br>Return", "60-Day<br>Return",
+    "Std Dev<br>(Daily)", "Skewness<br>(Daily)", "Kurtosis<br>(Daily, excess)"
+  )
+)
+```
+
+## Distribution of daily returns
+
+```{r}
+#| label: fig-module7-violin-sector
+#| fig-width: 13
+#| fig-height: 14
+#| fig-cap: "Distribution of daily simple returns by sector, S&P 500 versus Non-S&P 500. Display range bounded to -10% to 10% for readability."
+
+# Purpose:
+#   Show the full shape (not just the mean) of daily returns for each sector,
+#   with one small-multiple panel per sector so that within-sector S&P 500
+#   versus Non-S&P 500 dispersion can be compared directly (the same layout
+#   as the benchmark-only violin plot below, repeated per sector).
+# Inputs:
+#   module7_daily_returns joined with sector_native and benchmark_group.
+# Outputs:
+#   A horizontal violin plot faceted by sector, sharing a fixed x-axis scale.
+
+module7_violin_bound <- 0.10
+
+module7_sector_violin_data <- module7_daily_returns |>
+  dplyr::inner_join(
+    module7_symbol_df |>
+      dplyr::filter(!is.na(sector_native), sector_native != "Unclassified") |>
+      dplyr::select(symbol_yahoo, sector_native, benchmark_group),
+    by = "symbol_yahoo"
+  ) |>
+  dplyr::filter(abs(daily_return) <= module7_violin_bound) |>
+  dplyr::mutate(sector_native = factor(sector_native, levels = sector_native_levels))
+
+ggplot(
+  module7_sector_violin_data,
+  aes(x = daily_return, y = benchmark_group)
+) +
+  geom_violin(orientation = "y", fill = "#123B66", alpha = 0.75, na.rm = TRUE) +
+  facet_wrap(vars(sector_native), ncol = 3) +
+  geom_vline(xintercept = 0, linewidth = 0.35, color = "grey40") +
+  scale_x_continuous(labels = scales::label_number(suffix = "%", scale = 100)) +
+  labs(
+    title = "Daily-return distribution by sector",
+    subtitle = paste0(
+      "Display range: -", scales::percent(module7_violin_bound), " to ",
+      scales::percent(module7_violin_bound),
+      "; observations outside this range remain in the stored data. ",
+      "Each panel uses the same x-axis scale for cross-sector comparability."
+    ),
+    x = "Daily simple return",
+    y = NULL,
+    caption = source_caption
+  )
+```
+
+```{r}
+#| label: fig-module7-violin-benchmark
+#| fig-width: 11
+#| fig-height: 5.5
+#| fig-cap: "Distribution of daily simple returns, S&P 500 versus Non-S&P 500. Display range bounded to -15% to 15% for readability."
+
+# Purpose:
+#   Compare the overall shape of daily returns between the two benchmark
+#   groups, independent of sector.
+# Inputs:
+#   module7_daily_returns joined with benchmark_group.
+# Outputs:
+#   A horizontal violin plot with one violin per benchmark group.
+
+module7_benchmark_violin_data <- module7_daily_returns |>
+  dplyr::inner_join(
+    module7_symbol_df |> dplyr::select(symbol_yahoo, benchmark_group),
+    by = "symbol_yahoo"
+  ) |>
+  dplyr::filter(abs(daily_return) <= module7_violin_bound)
+
+ggplot(
+  module7_benchmark_violin_data,
+  aes(x = daily_return, y = benchmark_group)
+) +
+  geom_violin(orientation = "y", fill = "#667480", alpha = 0.75, na.rm = TRUE) +
+  geom_vline(xintercept = 0, linewidth = 0.35, color = "grey40") +
+  scale_x_continuous(labels = scales::label_number(suffix = "%", scale = 100)) +
+  labs(
+    title = "Daily-return distribution by benchmark group",
+    subtitle = paste0(
+      "Display range: -", scales::percent(module7_violin_bound), " to ",
+      scales::percent(module7_violin_bound),
+      "; observations outside this range remain in the stored data."
+    ),
+    x = "Daily simple return",
+    y = NULL,
+    caption = source_caption
+  )
+```
+
+# Limitations
+
+- **ETFs/ETNs are out of scope:** This report excludes exchange-traded funds and notes. The Stage 1 universe is built from exchange stock-screener listings (`tidyquant::tq_exchange()`), a source that does not enumerate fund/ETP products, so ETFs/ETNs are structurally absent from `universe_df` rather than merely undercounted. The one record previously labeled `"ETF or ETN"` by the Module 1 name-pattern heuristic was itself a false positive (WisdomTree Inc.'s own listed common stock, not a fund) and has been corrected. Findings throughout this report describe common stocks, ADRs, preferred shares, and related listed operating-company securities, not the full population of exchange-traded securities.
+- **Fixed-membership design:** Exchange listings and S&P 500 membership are frozen as of `r universe_as_of`. A later Stage 2 run updates measurements but does not add newly listed firms or change benchmark membership.
+- **Current-constituent and survivorship bias:** The static benchmark file contains constituents present when Stage 1 ran, not historical membership before that date.
+- **Different observation dates:** Universe metadata are fixed as of `r universe_as_of`, while market measurements are from `r analysis_date` and the latest daily-price observation is `r latest_history_date`.
+- **Yahoo Finance availability:** Quote fields and historical prices may be missing, delayed, stale, rate limited, or temporarily unavailable. Stage 2 preserves failed symbols and logs rather than silently deleting them.
+- **Heuristic security classification:** The exchange feed does not provide one standardized security-type variable. Name and symbol rules may misclassify unusual securities.
+- **Symbol normalization:** Share-class and preferred-share conversions are practical Yahoo mappings, not a universal identifier standard. Original exchange symbols remain in the static data.
+- **Current market capitalization:** Module 2 uses the fresh Yahoo market-cap quote when available, with fresh shares outstanding multiplied by the current reference price as a fallback. The exchange-directory market-cap value retained in Stage 1 is explicitly a build-date source snapshot and is not used as a current measurement.
+- **Missing fundamentals:** P/E and price-to-book are available only for subsets of the universe.
+- **Descriptive analysis:** The comparisons describe associations with fixed S&P 500 membership. They do not establish that benchmark membership causes differences in size, liquidity, or valuation.
+- **Approximate sector labels:** NASDAQ's screener currently returns no `sector` value for any ticker, so Module 4's `sector_native` labels are reconstructed by hand-mapping the 152 `industry_raw` values to a legacy 12-sector taxonomy documented in Module 4, not pulled from an authoritative field. This is not the GICS 11-sector scheme, and a minority of ambiguous industry labels required judgment calls; corrections should be made directly in `reference/industry_sector_map.csv`.
+- **Legacy 12-sector scheme, not current Zacks classification:** The 12-sector taxonomy reconstructed in Module 4 matches [NASDAQ's legacy stock-screener sector filter list](https://www.nasdaq.com/screening/companies-by-industry.aspx?industry=Consumer+Durable) and is commonly associated with Zacks Investment Research, which has historically supplied NASDAQ's screener data. Zacks' current, publicly documented classification system uses 16 sectors (63 medium industries, 289 expanded industries), not 12. The 12-sector scheme used throughout this report should therefore be treated as a legacy/historical NASDAQ classification rather than Zacks' present-day taxonomy, and any reference to "NASDAQ/Zacks" elsewhere in this report refers to that legacy lineage.
+- **EPS coverage and comparability:** Trailing EPS (`epsTrailingTwelveMonths`) is available for nearly all tickers, but forward EPS (`epsForward`) relies on analyst consensus estimates and is missing for approximately 20% of Non-S&P 500 tickers with no analyst coverage. Module 5 excludes tickers with missing EPS values from the relevant chart and discloses coverage rates. EPS levels are not directly comparable across sectors with different capital structures or share counts.
+- **52-week return is not dividend-adjusted:** Module 6 uses Yahoo's `fiftyTwoWeekChangePercent` field, which reflects price appreciation only. Total-return comparisons would differ, especially for high-dividend-yield sectors such as Public Utilities and Finance. A small number of tickers show extreme values (very large percentage gains from a low base or near -100% losses); these remain in the stored data and are only bounded for the distribution plot's display range, not removed.
+- **Module 7 return horizons are trading-day, not calendar-day, counts:** "1-day," "5-day," "20-day," and "60-day" returns count valid trading observations, so they span slightly different calendar windows around holidays. The 60-day horizon requires `lookback_calendar_days` (currently 100 in `02_update_market_data.R`) to comfortably exceed 60 trading days; if that setting is ever reduced, re-check the Module 7 coverage table before trusting the 60-day column. Sector and benchmark-group figures are equal-weighted means of ticker-level values, not float- or cap-weighted portfolio returns, and daily-return skewness/kurtosis are computed per ticker only when at least 20 daily observations are available.
+
+# Reproducibility notes
+
+- Run `01_build_universe.R` only when intentionally redefining the semester or assignment universe.
+- Run `02_update_market_data.R` whenever fresh market data are required. It always attempts new provider requests and never reads a market-data cache.
+- Render `03_eda.qmd` after Stage 2. The document reads only the `*_latest.rds` files and makes no internet calls.
+- Every output contains a universe build ID and symbol hash. The report stops if static-universe and market files do not match.
+- Every successful Stage 1 and Stage 2 run also preserves time-stamped archival files, so an older report can be reproduced by replacing or explicitly loading the corresponding dated files.
+
+```{r}
+#| label: session-information
+#| code-fold: true
+#| code-summary: "Show session information"
+
+# Purpose:
+#   Record the R version, platform, and loaded package versions used to render
+#   the report.
+# Inputs:
+#   The active R session.
+# Outputs:
+#   Standard sessionInfo() output for reproducibility and troubleshooting.
+
+sessionInfo()
+```

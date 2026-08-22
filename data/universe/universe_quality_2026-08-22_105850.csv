@@ -1,0 +1,19 @@
+category,metric,value,universe_as_of,universe_build_id,universe_symbol_hash
+Invalid-record screening,starting_records,7182,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Invalid-record screening,missing_symbol,2,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Invalid-record screening,missing_company,0,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Invalid-record screening,records_removed,2,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Normalization and matching,Raw exchange records,7182,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Normalization and matching,Clean full-universe records,7180,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Normalization and matching,Exact duplicate records removed,0,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Normalization and matching,Repeated exchange/symbol records resolved,0,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Normalization and matching,Symbols changed for Yahoo compatibility,391,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Normalization and matching,Unique Yahoo symbols in full universe,7180,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Normalization and matching,S&P 500 constituent symbols,504,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Normalization and matching,S&P 500 symbols matched to full exchange universe,502,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Normalization and matching,S&P 500 symbols supplemented in ticker master,3,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Normalization and matching,Unique Common Equity/ADR ticker-master symbols,5501,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Full-universe missingness,missing_yahoo_symbol,0,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Full-universe missingness,missing_sector,7180,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Full-universe missingness,missing_industry,718,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137
+Full-universe missingness,other_or_unclassified_security_type,24,2026-08-22,U_2026-08-22_105850,ada3c779e8d04137

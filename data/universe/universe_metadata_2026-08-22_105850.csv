@@ -1,0 +1,2 @@
+universe_build_id,universe_as_of,universe_built_at,universe_symbol_hash,full_universe_records,ticker_master_symbols,sp500_constituent_symbols,sp500_symbols_matched_to_exchange,sp500_symbols_supplemented,heuristic_security_classification,current_market_data_included,notes
+U_2026-08-22_105850,2026-08-22,2026-08-22T14:58:50Z,ada3c779e8d04137,7180,5501,504,502,3,TRUE,FALSE,Universe membership is static for downstream scripts. Exchange price and market-cap fields are build-date source snapshots only.
