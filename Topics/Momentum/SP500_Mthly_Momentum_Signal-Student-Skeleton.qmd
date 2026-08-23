@@ -1,0 +1,1143 @@
+---
+title: "SP500 Momentum "
+subtitle: "Constructing and evaluating a momentum signal on the SP500"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Background
+
+In the following we will
+
+1.  Pull pricing data for the SP500 constituents and index
+2.  Clean and Engineer the data
+3.  Construct a simple momentum metric
+4.  Generate a trading signal from momentum
+5.  Evaluate that signal
+
+# Housekeeping
+
+```{r}
+#| echo: false
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+
+source(here("Supporting", "ProjectSetUp.R")) 
+```
+
+# Data Acquisition
+
+## Get tickers
+
+Task: use tidyquant tq_index function to grab constituents of SP500
+
+```{r}
+sp500_members <- ?("?")  
+tickers <- sp500_members$?
+
+```
+
+Task: Purposefully override the tickers object to be a subset that contains only the first 10 elements of the tickers object you just defined.
+
+```{r}
+#tickers <- tickers[?]
+```
+
+Q: Why would we override the tickers object in this way?
+
+A: ?
+
+## Set Date Range
+
+Task: Set end date as 31Jul2026. Set start data as 10yrs prior.
+
+```{r}
+end_date   <- as.Date("2026-07-31")
+start_date <- end_date %m-% years(?)
+```
+
+## Get index prices
+
+Task: Use tq_get to pull the SP500 index monthly value using the adjusted closing price for the last trading day of each month
+
+```{r}
+spx_symbol <- "^GSPC"
+
+spx_monthly <- ?(spx_symbol,
+                      from = ?,
+                      to   = ?,
+                      get  = "stock.prices") %>%
+  group_by(symbol) %>%
+  tq_transmute(
+    select      = adjusted,          # use adjusted close
+    mutate_fun  = to.monthly,
+    indexAt     = "lastof",
+    col_rename  = "adj_close"
+  )
+
+head(spx_monthly)
+```
+
+## Get constituent prices
+
+Task: Use tq_get to pull monthly adjusted closing price data for all the constituents within the SP500.
+
+Warning: This may take several minutes to run as it is pulling data for 500 stocks. Note also that this is not an institutional grade API, so there may be occasional timeouts or other issues such as some stocks not loading. Pro Tip: Load small subsets of tickers.
+
+```{r}
+
+sp500_monthly <- ?(?,
+                        from = start_date,
+                        to   = end_date,
+                        get  = "stock.prices") %>%
+  group_by(symbol) %>%
+  tq_transmute(
+    select      = ?,
+    mutate_fun  = ?,
+    indexAt     = "lastof",
+    col_rename  = "adj_close"
+  ) %>%
+  ungroup() %>%
+  left_join(
+    sp500_members %>% select(symbol, company),
+    by = "symbol"
+  ) %>%
+  relocate(company, .after = symbol)
+
+head(sp500_monthly)
+```
+
+Q: What is the role and importance of the "group_by"?
+
+A: ?
+
+Q: What is the left-join doing?
+
+A: ?
+
+## Combine
+
+Task: Combine the index and constituents into a single dataframe
+
+```{r}
+Price <- rbind(spx_monthly %>% select(date, symbol, adj_close),
+      sp500_monthly %>% select(date, symbol, adj_close)) %>%
+  select(date, symbol, adj_close) %>%
+  pivot_wider(
+    names_from  = symbol,
+    values_from = adj_close
+  )%>% 
+  rename("SP500" = "^GSPC","Date" = "date")
+head(Price)
+```
+
+# Cleaning and Engineering
+
+## Gauge how dirty is the dataset
+
+Task: Drop the date column and convert to long
+
+```{r}
+Price_long <- Price %>%
+  ?(
+    cols = ?Date,
+    names_to = "ticker",
+    ? = "adj_close"
+  )
+  head(Price_long)
+```
+
+Task: Compute the fraction of missing observations for each ticker. Arrange from largest to smallest fraction missing
+
+```{r}
+missing_by_ticker <- Price_long %>%
+  summarise(
+    missing_frac = mean(is.na(adj_close)),
+    .by = ticker
+  ) %>%
+  arrange(?(missing_frac))
+head(missing_by_ticker)
+
+```
+
+Task: Compute fraction of missing for each date
+
+```{r}
+missing_by_date <- Price_long %>%
+  ?(
+    missing_frac = mean(is.na(adj_close)),
+    .by = ?
+  )
+head(missing_by_date)
+tail(missing_by_date)
+
+```
+
+Task: For each stock, find the first date at which it entered the sample. Summarize and provide counts by year
+
+```{r}
+entry_dates <- Price_long %>%
+  filter(!is.na(adj_close)) %>%
+  summarise(
+    first_date = min(?),
+    .by = ticker
+  ) %>%
+  arrange(first_date)
+head(entry_dates)
+summary(entry_dates$first_date)
+
+entry_dates_sum <- entry_dates %>%
+  mutate(year = lubridate::year(first_date)) %>%
+  group_by(year) %>%
+  summarise(n = ?, .groups = "drop") %>%
+  arrange(desc(n))
+
+
+```
+
+Task: Plot the number of stocks without missing data in our panel over time.
+
+```{r}
+Price_long %>%
+  summarise(active_stocks = sum(!is.na(adj_close)), .by = Date) %>%
+  ggplot(aes(Date, active_stocks)) +
+  geom_line() +
+  labs(title = "Number of Active Stocks Over Time")
+
+```
+
+Q: What's your impression of missingness? Does it present a problem for us?
+
+A:
+
+?
+
+## Clean the dataset
+
+One of the things we want to do as we clean the data is ensure we have a balanced panel. Not all analyses require a balanced panel, but it is convenient for our purposes.
+
+Q: Can you identify two approach to achieving a balanced panel?
+
+A:
+
+?
+
+Q: Describe the code architecture for dropping tickers that don't have sufficient number of observations.
+
+A:
+
+?
+
+Task: Run this code chunk
+
+```{r}
+entry_threshold1 <- start_date 
+
+todrop1 <- entry_dates %>%
+  filter(first_date > entry_threshold1) %>%
+  select(ticker)
+
+entry_threshold <- start_date %m+% months(1)
+
+todrop <- entry_dates %>%
+  filter(first_date > entry_threshold) %>%
+  select(ticker)
+
+nrow(todrop1)
+nrow(todrop)
+```
+
+Q: Why are the lengths of todrop1 and todrop so different?
+
+A:
+
+?
+
+Task: Create a balanced panel by dropping any tickers that have not been trading for at least 10yrs.
+
+```{r}
+SP500_Mthly_Prices <-Price_long %>%
+  ?(!ticker %in% todrop$ticker)
+n_distinct(SP500_Mthly_Prices$ticker)
+
+```
+
+Task: Verify balance of the panel by computing the count of tickers on each date. Then compute the min and max of those counts.
+
+```{r}
+SP500_Mthly_Prices %>%
+  dplyr::count(Date) %>%
+  summarise(min = min(?), max = max(n))
+
+```
+
+Q: Interpret the results. What's the implication?
+
+A: ?
+
+Task: Construct a dataframe of simple 1mth returns.
+
+```{r}
+SP500_Mthly_SimpleReturns <- SP500_Mthly_Prices %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  reframe(
+    Date = Date[-1],
+    OneMthSimpleRet = ?
+            )
+head(SP500_Mthly_SimpleReturns)
+```
+
+Q: Can you explain the units? e.g. does "0.05" mean "0.05%" or "5%"?
+
+A: ?
+
+Q: Given the way this returns are calculated upon the last day of the month, are we missing the trading throughout the first day of the month?
+
+A:?
+
+Task: Construct a dataframe of log 1mth returns.
+
+```{r}
+SP500_Mthly_LogReturns <- SP500_Mthly_Prices %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  reframe(
+    Date = Date[-1],
+    OneMthLogRet = ?            )
+head(SP500_Mthly_LogReturns)
+```
+
+Q: Why is the group_by essential?
+
+A: ?
+
+Q: Should we use Simple or Log returns for our EDA? What would Momentum calculation?
+
+A: ?
+
+## Save
+
+Task: Save SP500_Mthly_Prices, SP500_Mthly_SimpleReturns, and SP500_Mthly_LogReturns to a single R workspace using "save"
+
+```{r}
+save(
+  SP500_Mthly_Prices,
+  SP500_Mthly_SimpleReturns,
+  SP500_Mthly_LogReturns,
+  file = here("Data", "SP500_Monthly_Data.RData")
+)
+```
+
+Task: Save the SP500_Mthly_Prices, SP500_Mthly_SimpleReturns, and SP500_Mthly_LogReturns to individual csv files
+
+```{r}
+readr::write_csv(SP500_Mthly_Prices,
+                 here("data", "SP500_Mthly_Prices.csv"))
+
+
+readr::write_csv(SP500_Mthly_SimpleReturns,
+                 here("data", "SP500_Mthly_SimpleReturns.csv"))
+
+readr::write_csv(SP500_Mthly_LogReturns,
+                 here("data", "SP500_Mthly_LogReturns.csv"))
+```
+
+Q: From an architectural standpoint, why might it be helpful to save these files at this stage of the code?
+
+A: ?
+
+## Start Fresh
+
+If you were starting from the saved files you can uncomment the code chunks below and proceed from there.
+
+Task: Load the RData file
+
+```{r}
+#| execute: false
+load(here::here("data", "SP500_Monthly_Data.RData"))
+```
+
+## Compute Momentum
+
+Q: Within finance, what's meant by "momentum"? What is the rationale for using that as a trading signal? How compute the "famous" 12-2 momentum?
+
+A:
+
+?
+
+Task: Compute 12-2 momentum for every monthly observation
+
+```{r}
+SP500_Mthly_Momentum <- SP500_Mthly_SimpleReturns %>%
+  arrange(ticker, Date) %>%
+  group_by(ticker) %>%
+  mutate(
+    momentum =
+     ?
+  ) %>%
+  ungroup()
+head(SP500_Mthly_Momentum,20)
+```
+
+Q: Why is momentum missing when we peak at the head of this data?
+
+A:
+
+?
+
+Q: Find the first momentum observation for ticker A (Aligent). Interpret it's value.
+
+A: ?
+
+## Merge Momentum & Returns
+
+Task: Merge the returns and momentum, retaining only those dates with complete information
+
+```{r}
+merged_df <- SP500_Mthly_SimpleReturns %>%
+  left_join(
+    SP500_Mthly_? %>% select(-OneMthSimpleRet),
+    by = c("Date", "ticker")
+  )
+head(merged_df)
+```
+
+Q: Why do we have the "-"" in front of OneMthSimpleRet?
+
+A: ?
+
+## Set Test and Train Periods
+
+Task: Create a dataframe for the Train period which spans the beginning of the dataset through Dec2025. Call this dataframe Train. Create a dataframe for the single-holdout Test period, Jan2026. Call this dataframe Test. Also create accompanying Train.Returns, containing only ticker, date, and returns as well as Train.Momentum, containing only ticker, date, and momentum. Repeat for Test.Returns and Test.Momentum.
+
+```{r}
+
+test_date <- as.Date("2026-01-31")
+last_train_date <- as.Date("2025-12-31")
+
+Train <- merged_df %>% filter(Date < test_date)
+Train.Returns  <- Train %>% select(!momentum)
+Train.Momentum <- Train %>% select(!OneMthSimpleRet)
+
+Test <- merged_df %>% filter(?)
+Test.Returns  <- Test %>% select(!momentum)
+Test.Momentum <- Test %>% select(!OneMthSimpleRet)
+
+```
+
+Q: Speculate how we might use these Test and Train data objects.
+
+A: ?
+
+## Isolate Index and Constituents
+
+Task: Isolate the returns for the index and the group of constituents into separate dataframes. Repeat for momentum.
+
+```{r}
+Train.Constituents <- Train %>%
+  filter(?)
+Train.Returns.Index <- Train.Returns %>%
+  filter(?)
+Train.Returns.Constituents <- Train.Returns %>%
+  filter(!ticker == "SP500")
+Train.Momentum.Index <- Train.Momentum %>%
+  filter(ticker == "SP500")
+Train.Momentum.Constituents <- Train.Momentum %>%
+  filter(!ticker == "SP500")
+
+Test.Constituents <- Test %>%
+  filter(!ticker == "SP500")
+Test.Returns.Index <- Test.Returns %>%
+  filter(ticker == "SP500")
+Test.Returns.Constituents <- Test.Returns %>%
+  filter(!ticker == "SP500")
+Test.Momentum.Index <- Test.Momentum %>%
+  filter(ticker == "SP500")
+Test.Momentum.Constituents <- Test.Momentum %>%
+  filter(!ticker == "SP500")
+
+```
+
+Q: Why might we want to isolate the index?
+
+A: ?
+
+# EDA
+
+## Helper: Summary Statistics
+
+```{r}
+compute_summary_stats <- function(x) {
+  tibble(
+    N         = sum(!is.na(x)),
+    Mean      = mean(x, na.rm = TRUE),
+    `Std Dev` = sd(x, na.rm = TRUE),
+    Skew      = moments::skewness(x, na.rm = TRUE),
+    Kurtosis  = moments::kurtosis(x, na.rm = TRUE),
+    Min       = min(x, na.rm = TRUE),
+    `5%`      = quantile(x, 0.05, na.rm = TRUE),
+    `25%`     = quantile(x, 0.25, na.rm = TRUE),
+    `50%`     = quantile(x, 0.50, na.rm = TRUE),
+    `75%`     = quantile(x, 0.75, na.rm = TRUE),
+    `95%`     = quantile(x, 0.95, na.rm = TRUE),
+    Max       = max(x, na.rm = TRUE)
+  )
+}
+
+metric_order <- c(
+  "N", "Mean", "Std Dev", "Skew", "Kurtosis",
+  "Min", "5%", "25%", "50%", "75%", "95%", "Max"
+)
+
+# Contrasts two or more named groups side by side, one column per group.
+summary_table <- function(...) {
+  groups <- list(...)
+  purrr::imap_dfr(groups, ~ compute_summary_stats(.x) %>% mutate(Group = .y)) %>%
+    pivot_longer(-Group, names_to = "Metric", values_to = "Value") %>%
+    pivot_wider(names_from = Group, values_from = Value) %>%
+    mutate(Metric = factor(Metric, levels = metric_order)) %>%
+    arrange(Metric)
+}
+
+# Displays the summary stats for a single vector (e.g. a vector of z-scores).
+single_summary_table <- function(x) {
+  compute_summary_stats(x) %>%
+    pivot_longer(everything(), names_to = "Metric", values_to = "Value") %>%
+    mutate(Metric = factor(Metric, levels = metric_order)) %>%
+    arrange(Metric)
+}
+```
+
+## Returns
+
+Task: Construct a table that contrasts the performance of returns in the last date of the Training period and the single date in the Test period. Columns are Train and Test. Rows are N, Mean, Std Dev, Skew, Kurtosis, Min, 5% quantile, 25% quantile, 50% quantile, 75% quantile, 95% quantile, Max.
+
+```{r}
+returns_train_last <- Train.Returns.Constituents %>%
+  filter(Date ?) %>%
+  pull(OneMthSimpleRet)
+
+returns_test <- Test.Returns.Constituents %>%
+  pull(OneMthSimpleRet)
+
+summary_table(Train = returns_train_last, Test = returns_test)
+```
+
+Q: Do you notice anything that is informative to potential efficacy of our signal?
+
+A: ?
+
+Task: Compute a t-test of equal mean returns in the Test and Train periods.
+
+```{r}
+# Welch's t-test (unequal variance), two-sided.
+?
+```
+
+Q: Interpret the t.test as it pertains to our signal.
+
+A: ?
+
+Task: Create two overlapping density plots of Test and Train period returns. Use ggplot with geom_density.
+
+```{r}
+bind_rows(
+  tibble(value = returns_train_last, Period = "Train"),
+  tibble(value = returns_test,       Period = "Test")
+) %>%
+  ggplot(aes(value, fill = Period)) +
+  geom_density(alpha = 0.5) +
+  labs(
+    title = "Last Train Date vs Test Date Returns",
+    x = "Monthly Simple Return",
+    y = "Density"
+  )
+```
+
+Q: Interpret as it relates to our signal.
+
+A: ?
+
+Task: For each stock, compute the mean and standard deviation of returns during the Training period. Using those sample metrics, compute the z score for that stock's single Test period return. Repeat for every stock. Summarize those z scores via Mean, Std Dev, Skew, Kurtosis, Min, 5% quantile, 25% quantile, 50% quantile, 75% quantile, 95% quantile, Max.
+
+```{r}
+returns_train_stats <- Train.Returns.Constituents %>%
+  summarise(
+    mean_ret = ?(?, na.rm = TRUE),
+    sd_ret   = ?(?, na.rm = TRUE),
+    .by = ticker
+  )
+
+returns_z <- Test.Returns.Constituents %>%
+  left_join(returns_train_stats, by = "ticker") %>%
+  mutate(z_return = ?)
+
+single_summary_table(returns_z$z_return)
+```
+
+Q: Interpret as it pertains to our signal.
+
+A: ?
+
+## Momentum
+
+Task: Construct a table that contrasts the momentum in the last date of the Training period vs the full history of the Training period, excluding the last date from the full-history group so the two samples do not overlap. Columns are "Last Train Date" and "Full Train History". Rows are N, Mean, Std Dev, Skew, Kurtosis, Min, 5% quantile, 25% quantile, 50% quantile, 75% quantile, 95% quantile, Max.
+
+```{r}
+momentum_last_date <- Train.Momentum.Constituents %>%
+  filter(Date ? last_train_date) %>%
+  pull(momentum)
+
+momentum_full_history <- Train.Momentum.Constituents %>%
+  filter(Date ? last_train_date, !is.na(momentum)) %>%
+  pull(momentum)
+
+summary_table(
+  `Last Train Date`    = momentum_last_date,
+  `Full Train History` = momentum_full_history
+)
+```
+
+Task: Compute a t-test of equal mean momentum in the two periods.
+
+```{r}
+# Welch's t-test (unequal variance), two-sided.
+?
+```
+
+Task: Create two overlapping density plots of the two period's momentum. Use ggplot with geom_density.
+
+```{r}
+bind_rows(
+  tibble(value = momentum_last_date,    Period = "Last Train Date"),
+  tibble(value = momentum_full_history, Period = "Full Train History")
+) %>%
+  ggplot(aes(value, fill = Period)) +
+  geom_density(alpha = 0.5) +
+  labs(
+    title = "Last Train Date vs Full Train History Momentum",
+    x = "12-2 Momentum",
+    y = "Density"
+  )
+```
+
+Task: For each stock, compute the mean and standard deviation of momentum during the Training period excluding the most recent date. Using those sample metrics, compute the z score for that stock's single last training period momentum. Repeat for every stock. Summarize those z scores via Mean, Std Dev, Skew, Kurtosis, Min, 5% quantile, 25% quantile, 50% quantile, 75% quantile, 95% quantile, Max
+
+```{r}
+momentum_history_stats <- ? %>%
+  filter(Date < last_train_date, !is.na(momentum)) %>%
+  summarise(
+    mean_mom = mean(momentum, na.rm = TRUE),
+    sd_mom   = sd(momentum, na.rm = TRUE),
+    .by = ticker
+  )
+
+momentum_z <- T? %>%
+  filter(Date == last_train_date) %>%
+  left_join(momentum_history_stats, by = "ticker") %>%
+  mutate(z_momentum = (momentum - mean_mom) / sd_mom)
+
+single_summary_table(momentum_z$z_momentum)
+```
+
+Q: What do these momentum analyses suggest?
+
+A: ?
+
+## Connecting Momentum and Returns
+
+Task: Create a scatterplot with average Test Period Returns for stock i on the vertical axis and Momentum during the train period for stock i on the horizontal axis.
+
+```{r}
+# Join on ticker (rather than plotting raw vectors) since Train.Momentum.Constituents
+# has one row per ticker/month while Test.Returns.Constituents has one row per
+# ticker; an unjoined plot would silently misalign observations.
+momentum_returns_scatter <- Train.Momentum.Constituents %>%
+  filter(Date == last_train_date) %>%
+  select(ticker, momentum) %>%
+  inner_join(
+    Test.Returns.Constituents %>% select(ticker, OneMthSimpleRet),
+    by = "ticker"
+  )
+
+ggplot(momentum_returns_scatter, aes(x = momentum, y = OneMthSimpleRet)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Test Period Return vs Train Period Momentum",
+    x = "Momentum (as of last Train date)",
+    y = "Test Period Return"
+  )
+```
+
+Q: Interpret as it relates to the efficacy of our signal.
+
+A: ?
+
+Task: At the final date of the training period, identify the tickers with the highest and lowest momentum. Report each ticker and its momentum value.
+
+```{r}
+extreme_momentum <- Train.Momentum.Constituents %>%
+  filter(Date == last_train_date, !is.na(momentum)) %>%
+  filter(momentum == ? | momentum == ?) %>%
+  select(ticker, momentum)
+
+extreme_momentum
+```
+
+Task: Create a plot of the prices over time, with these two tickers overlayed. Index the prices to 100 at the final training period observation for each ticker. Plot the last 12 months of the training period and the entire testing period.
+
+```{r}
+extreme_tickers <- extreme_momentum$?
+
+price_window_start <- last_train_date %m-% months(12)
+
+test_period_end <- max(Test.Returns.Constituents$Date, na.rm = TRUE)
+
+indexed_prices <- SP500_Mthly_Prices %>%
+  filter(ticker %in% extreme_tickers, Date >= price_window_start, Date <= test_period_end) %>%
+  group_by(ticker) %>%
+  mutate(
+    base_price = adj_close[Date == last_train_date],
+    indexed_price = ?
+  ) %>%
+  ungroup()
+
+ggplot(indexed_prices, aes(x = Date, y = indexed_price, color = ticker)) +
+  geom_line() +
+  geom_vline(xintercept = last_train_date, linetype = "dashed") +
+  labs(
+    title = "Indexed Prices: Highest vs Lowest Momentum Tickers",
+    subtitle = "Indexed to 100 at final training period date",
+    x = "Date",
+    y = "Indexed Price (Base = 100)",
+    color = "Ticker"
+  )
+```
+
+Q: Interpret the plot as it pertains to our signal. 
+
+A: 
+
+?
+
+# Construct the Signal
+
+Task: Construct a simple momentum strategy
+
+- Define LongCondition = 1 if $mom^{Train}_{i} >0$ and 0 otherwise
+
+- Define ShortCondition = 1 if $mom^{Train}_{i} < 0$ and 0 otherwise
+
+- $s_{i,t}$ = LongCondition minus ShortCondition
+
+Task: Create a dataframe that contains the momentum on the last observation of the training period
+
+```{r}
+
+Signal_Matrix <- Train.Momentum.Constituents %>% 
+  filter(Date ? last_train_date) %>%
+  select(ticker, momentum) %>% 
+  rename("signal_matrix" = "momentum")
+
+Signal_Matrix
+```
+
+Task: Create a dataframe that takes +1,0,-1 based upon long, neutral, short positioning. Long if signal \> tau. Short if signal less than -tau. Neutral otherwise.
+
+```{r}
+
+tau <- ?
+
+Signal_Position <- Signal_Matrix %>%
+  transmute(
+    ticker,
+    signal = case_when(
+      signal_matrix >  ?  ~  1L,
+      signal_matrix < ?  ~ -1L,
+      TRUE             ~  0L
+    )
+  ) %>%
+  rename("signal_position" = "signal")
+
+Signal_Position
+
+# Note: the "L" tells R to store the +1,0,-1 as integers rather than numerics, which is more efficient for storage. 
+
+```
+
+Q: Why no 0s in the Signal_Position Matrix?
+
+A:
+
+- ?
+
+# Signal Evaluation
+
+## Evaluate on Single HoldOut
+
+Task: Format Test period returns to conform to the Signal Testing function
+
+```{r}
+test_returns <- Test.Returns.Constituents %>%
+  select(ticker,OneMthSimpleRet) %>%
+  rename(test_returns = OneMthSimpleRet)
+```
+
+Task: Create meta labels
+
+```{r}
+ Meta <- list(
+   assetname = "asset",
+   signalname = "Momentum"
+ )
+```
+
+Task: Implement the Signal Evaluation Single HoldOut function with return_threshold set to 0.
+
+```{r}
+return_threshold = ?
+
+  SignalEval <- ?(
+    test_returns = test_returns,
+    Meta = Meta,
+    return_threshold = return_threshold,
+    signal_position = Signal_Position
+  )
+```
+
+Q: What's the difference in meaning of tau and return_threshold?
+
+A:
+?
+
+Q: What if set tau very large? What is the (dis)advantage?
+
+A:
+?
+
+Q: What if set return threshold very large? What is the (dis)advantage?
+
+A:
+?
+
+Task: Display the Trade results
+
+```{r}
+SignalEval$?
+```
+
+Q: Interpret the trade results. Can you comment on how active was the signal? Connect that to "coverage".
+
+A:
+
+?
+
+Q: Do you remember on what period are we testing? What is the frequency of the data?
+
+A:
+
+?
+
+Task: Display the hit table
+
+```{r}
+SignalEval$?
+```
+
+Q: Interpret. Comment on the statistical significance. Why are the 2 columns of results the same?
+
+A:
+?
+
+Q: How alter our settings so that "all" differs from "acted"?
+
+A:
+
+?
+
+Task: Display the Info Coefficient
+
+```{r}
+SignalEval$?
+```
+
+Q: Interpret. What is the difference in the conceptual meaning of Hit Rate and IC? Comment on the statistical significance.
+
+A:
+
+?
+
+Task: Display the confusion matrix.
+
+```{r}
+SignalEval$?
+```
+
+Q: Interpret with a focus on Recall, Specificity, and Type 1 error for Longs and Shorts. Do we capture more of the upside or downside? Do we avoid more bad longs or bad shorts? Did we make more mistakes on the long or short side?
+
+A:
+
+?
+
+### Evaluate Relative to Benchmark
+
+Q: Why might we want to compare our signal to a benchmark like the SP500?
+
+A:
+
+?
+
+Q: How might we compare the veracity of this signal to a benchmark like the SP500 index return?
+
+A:?
+
+Task: Compute excess returns for the test period by subtracting the index return (`Test.Returns.Index`) from each constituent's return, then re-run the signal evaluation on these excess returns with `return_threshold = 0`.
+
+```{r}
+excess_returns_test <- Test.Returns.Constituents %>%
+  select(ticker, OneMthSimpleRet) %>%
+  mutate(OneMthSimpleRet = ? - ?) %>%
+  rename(test_returns = OneMthSimpleRet)
+
+SignalEvalBenchmark <- ?(
+  test_returns = ?,
+  Meta = Meta,
+  return_threshold = 0,
+  signal_position = Signal_Position
+)
+```
+
+Task: Display the Trade results.
+
+```{r}
+SignalEvalBenchmark$?
+```
+
+Q: Any major differences in trade performance? Why are the Long/Short fractions the same?
+
+A:
+
+?
+
+Task: Display the hit table.
+
+```{r}
+SignalEvalBenchmark$?
+```
+
+Task: Display the Info Coefficient.
+
+```{r}
+SignalEvalBenchmark$?
+```
+
+Task: Display the confusion matrix.
+
+```{r}
+SignalEvalBenchmark$?
+```
+
+## Evaluate the Signal on Multiple HoldOuts
+
+Background: In the single-holdout section above we built one signal from momentum observed at a single date (Dec 2025) and tested it against one out-of-sample month (Jan 2026). Momentum is already a *trailing* calculation available at every month-end, so we can rebuild the same signal logic across every date to see how the strategy performs through time, rather than relying on a single lucky (or unlucky) month.
+
+We'll walk forward from Jan 2026 through Jul 2026: at each step the signal is built from momentum known as of the prior month-end, and evaluated against the return realized over the following month.
+
+### Build the Signal Panel
+
+Task: Using the same `tau` defined above, compute a `signal_position` (+1/0/-1) for every constituent/date combination in `SP500_Mthly_Momentum` (excluding the index).
+
+```{r}
+Signal_Panel <- SP500_Mthly_Momentum %>%
+  filter(ticker != "SP500", !is.na(momentum)) %>%
+  arrange(ticker, Date) %>%
+  transmute(
+    ticker,
+    signal_date = Date,
+    signal_position = case_when(
+      momentum >  ?  ~  1L,
+      momentum < ?  ~ -1L,
+      TRUE             ~  0L
+    )
+  )
+
+Signal_Panel
+```
+
+### Add the Forward-Return Offset
+
+Task: A signal built from momentum as of `signal_date` should be evaluated against the return realized over the *next* month, not the same month. Rather than computing that date by adding a calendar month (error-prone around month-end conventions), find each ticker's next available trading date directly from the data.
+
+```{r}
+Signal_Panel <- Signal_Panel %>%
+  arrange(ticker, signal_date) %>%
+  group_by(ticker) %>%
+  mutate(eval_date = lead(signal_date)) %>%
+  ungroup() %>%
+  filter(!is.na(eval_date))
+
+Signal_Panel
+```
+
+Q: Why do we need `eval_date` at all instead of just using `signal_date` to join to returns?
+
+A:
+
+?
+
+### Format Signal and Returns for the Evaluation Function
+
+Task: `signal_evaluation_multipleholdout()` expects a signal time series with columns `date`, `ticker`, `signal_position`, and a returns time series with columns `date`, `ticker`, `test_returns`, where the `date` columns line up. Re-date the signal panel to `eval_date` so it joins directly to the return it is forecasting, then restrict both panels to the Jan 2026 - Jul 2026 walk-forward window.
+
+```{r}
+holdout_start <- as.Date("2026-01-01")
+holdout_end   <- as.Date("2026-07-31")
+
+signal_position_ts <- Signal_Panel %>%
+  filter(eval_date >= holdout_start, eval_date <= holdout_end) %>%
+  transmute(date = eval_date, ticker, signal_position)
+
+test_returns_ts <- SP500_Mthly_SimpleReturns %>%
+  filter(ticker != "SP500", Date >= holdout_start, Date <= holdout_end) %>%
+  transmute(date = Date, ticker, test_returns = OneMthSimpleRet)
+```
+
+Q: How many periods in the signal_position_ts object? How many periods in the test_returns_ts object?
+
+A:
+
+?
+
+### Run the Walk-Forward Evaluation
+
+Task: Reuse the `Meta` and `return_threshold` defined in the single-holdout section above, and evaluate the signal at every month-end from Jan 2026 through Jul 2026.
+
+```{r}
+MultiEval <- ?(
+  signal_position_ts = signal_position_ts,
+  returns_ts         = test_returns_ts,
+  Meta               = Meta,
+  return_threshold   = return_threshold
+)
+```
+
+Task: Display the period-by-period results.
+
+```{r}
+MultiEval$?
+```
+
+Q: Focus on "all". Describe the signal veracity over time.
+
+A:
+
+?
+
+Task: Display the time-series summary (mean and SD of IC, hit rate, and coverage across all holdout months).
+
+```{r}
+MultiEval$?
+```
+
+Q: How does this walk-forward summary compare to the single Jan 2026 snapshot above? What does a large SD relative to the mean of `IC` tell you that the single-holdout result alone could not?
+
+A:
+?
+
+Task: Plot the IC over the holdout window to visualize stability.
+
+```{r}
+
+MultiEval$by_date %>%
+  ggplot(aes(date, ic_all)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_x_date(
+    breaks = MultiEval$by_date$date,
+    labels = scales::date_format("%Y-%m-%d")
+  ) +
+  labs(
+    title = "Walk-Forward Information Coefficient (All)",
+    x = "Evaluation Month",
+    y = "IC"
+  )
+
+```
+
+Q: What is the negative IC at the end of the walk forward suggesting?
+
+A: ?
+
+### Evaluate Relative to Benchmark
+
+Task: Build an index return series over the walk-forward window, join it to the constituent return series, and compute excess returns (constituent return minus index return). Re-run the walk-forward evaluation on these excess returns with `return_threshold = 0`.
+
+```{r}
+index_returns_ts <- SP500_Mthly_SimpleReturns %>%
+  filter(ticker == "SP500", Date >= holdout_start, Date <= holdout_end) %>%
+  transmute(date = Date, index_return = OneMthSimpleRet)
+
+test_returns_ts_benchmark <- test_returns_ts %>%
+  left_join(index_returns_ts, by = "date") %>%
+  mutate(test_returns = ?) %>%
+  select(date, ticker, test_returns)
+
+MultiEvalBenchmark <- signal_evaluation_multipleholdout(
+  signal_position_ts = ?,
+  returns_ts         = ?,
+  Meta               = Meta,
+  return_threshold   = 0
+)
+```
+
+Task: Display the period-by-period results.
+
+```{r}
+MultiEvalBenchmark$by_date
+```
+
+Task: Display the time-series summary (mean and SD of IC, hit rate, and coverage across all holdout months).
+
+```{r}
+MultiEvalBenchmark$ts_summary
+```
+
+Task: Plot the IC over the holdout window to visualize stability.
+
+```{r}
+ 
+MultiEvalBenchmark$by_date %>%
+  ggplot(aes(date, ic_all)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_x_date(
+    breaks = MultiEval$by_date$date,
+    labels = scales::date_format("%Y-%m-%d")
+  ) +
+  labs(
+    title = "Walk-Forward Information Coefficient for Excess Returns",
+    x = "Evaluation Month",
+    y = "IC"
+  )
+```
+
+Q: Did the signal maintain its strength once we evaluated relative to the benchmark?
+
+A:
+
+?
