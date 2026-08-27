@@ -34,7 +34,7 @@ source(here("Supporting", "ProjectSetUp.R"))
 # Finance data and rebuilds all leaderboard calculations). This file and
 # everything it sources lives entirely under Supporting/LeaderBoardDemo/ 
 
-source("Supporting/LeaderBoaDemo/R/run_demo.R")
+source("Supporting/LeaderBoardDemo/R/run_demo.R")
 
 x <- demo_data
 team_summary <- x$team_summary
