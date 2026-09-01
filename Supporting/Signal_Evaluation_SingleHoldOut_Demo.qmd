@@ -1,0 +1,412 @@
+---
+title: "Signal Evaluation Demo - Single Hold Out"
+subtitle: "Evaluating the efficacy of a Signal over a single hold out period "
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Background
+
+This file demonstrates how to use the function signal_evaluation_singleholdout, which is custom built for our class.
+
+For this demo we will simulate some trading data, use signal_evaluation_singleholdout to evaluate, and then interpret the performance stats.
+
+# Housekeeping
+
+```{r}
+#| echo: false
+#| warning: false
+
+cat("\014")  # clear console
+rm(list=ls())  # Clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "ProjectSetUp.R"))
+```
+
+# Data
+
+## Tickers
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Set a seed for consistent randomization
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+set.seed(123)
+```
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Create a vector of 300 ticker labels of the form A001, A002, ..., A300
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+N <- 300
+tickers <- paste0("A", sprintf("%03d", 1:N))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+tickers
+```
+:::
+
+## Signal
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Generate a signal_matrix of length N from a N(0,1) distribution, representing the signal strength
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+signal_matrix_vec <- rnorm(N, mean = 0, sd = 1)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+head(signal_matrix_vec)
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Create a signal_position vector based on the signal_matrix, assigning 1 for values above tau, -1 for values below -tau, and 0 otherwise. Let's set tau = 0.05 for now.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+  tau <- 0.05
+  signal_position_vec <- ifelse(signal_matrix_vec >  tau,  1,
+                                ifelse(signal_matrix_vec < -tau, -1, 0))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+head(signal_position_vec)
+```
+:::
+
+## Returns
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Generate test period returns from a linear model loosely related to signal strength. ret = 0.01\*signal + N(0,0.05) noise
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+  eps <- rnorm(N, 0, 0.05)
+  ret_simple <- 0.01 * signal_matrix_vec + eps
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+head(ret_simple)
+```
+:::
+
+## Combine
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Format the signal_position and test_returns as data frames with ticker labels
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+  signal_position <- data.frame(ticker = tickers, signal_position = signal_position_vec)
+  test_returns <- data.frame(ticker = tickers, test_returns = ret_simple)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+head(test_returns)
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Format the meta data for labels
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+  Meta <- list(assetname = "asset", benchmarkname = "market", signalname = "Momentum")
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+Meta
+```
+:::
+
+# Signal
+
+When you are implementing in practice, you likely won't be simulating the returns and signals as we did above. Instead, you'd be using observed data to generate those objects.
+
+Now that we have the data for the asset returns and signal generated, let's evalaute the signal.
+
+## Call to Signal Evaluator
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Set the threshold for classification to .25%
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+return_threshold <- 0.0025
+```
+
+::: {.callout-tip title="Question"}
+Q: What's the meaning of this return_threshold within our case?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+A: Here, `return_threshold = 0.0025` creates a 0.25% neutral band around zero. The function classifies each realized test-period return as:
+
+- **Positive:** return \> +0.25%
+- **Neutral:** -0.25% $\leq$ return $\leq$ +0.25%
+- **Negative:** return \< -0.25%
+
+The threshold defines how large a return must be before we treat it as meaningfully positive or negative. For example, a long signal is a correct positive classification only when the subsequent return exceeds +0.25%; a return inside the neutral band is classified as neutral. The threshold is used in the return buckets and confusion-matrix analysis.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Call the signal_evaluation_static function
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+  SignalEval <- signal_evaluation_singleholdout(
+    test_returns = test_returns,
+    Meta = Meta,
+    return_threshold = return_threshold,
+    signal_position = signal_position
+  )
+```
+
+## Signal Evaluation
+
+In this subsection we will call selective components of the SignalEval object and interpret the efficacy of our signal.
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Display the TradeResults and their accompanying percent table.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| eval: false 
+SignalEval$TradeResults
+SignalEval$TradeResults_Percent
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+SignalEval$TradeResults
+SignalEval$TradeResults_Percent
+```
+:::
+
+::: {.callout-tip title="Question"}
+Q: Interpret the first row of the Percent table
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+A:
+
+- .257: In 25.7% of all observations we went long & there were positive test period returns
+- 0.01: In 1% of all observations we didn't trade and there were positive test period returns
+- 0.227: In 22.7% of all observations we went short and there were positive test period returns
+- 0.493: In 49.3% of all observations where were positive test period returns
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Display the return comparison table
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| eval: false 
+SignalEval$return_comparison
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+SignalEval$return_comparison
+```
+:::
+
+::: {.callout-tip title="Question"}
+Q: Interpret the Long vs Short results
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+A: The difference in mean returns between long and short returns is 0.0086, indicating that on average, long positions outperformed short positions by 0.86%. The p-value of 0.0696 suggests that this difference is marginally statistically significant at the 10% level, indicating some evidence that the signal has predictive power over test period returns.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Display the violin plots of test returns by signal, outcome, and all combos
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| eval: false
+SignalEval$plots$signal
+SignalEval$plots$facet
+SignalEval$plots$combo
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+SignalEval$plots$signal
+SignalEval$plots$facet
+SignalEval$plots$combo
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Display summary table of sample stats
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| eval: false
+SignalEval$summary_table
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+SignalEval$summary_table
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Display Info Coefficient
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| eval: false
+SignalEval$summary_ic_tbl
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+SignalEval$summary_ic_tbl
+```
+:::
+
+::: {.callout-tip title="Question"}
+Q: What does the IC all mean? Is it statistically significant?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+A:
+
+- IC captures the correlation between the signal and test period returns
+- The IC of 0.0847 has a p value of 0.1432, implying that we fail to reject the null that IC = 0, suggesting that the signal has little predictive power over test period returns
+- Note that the results are similar if we focus only on the observations where we took a position (Acted Only)
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Display the Hit Rate
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| eval: false
+SignalEval$hit_table
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+SignalEval$hit_table
+```
+:::
+
+::: {.callout-tip title="Question"}
+Q: What does the Hit Rate mean? What does the p value and Coverage suggest?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+A:
+
+- The Hit Rate of .52 implies that for 52% of the observations our position correctly predicted the direction of test period returns.
+- The p value of .356 suggests that we fail to reject the null that Hit Rate = 0.5, indicating that the signal has little predictive power over test period returns
+- The coverage of .966 implies that we were active roughly 96% of the observations.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Task: Display the confusion matrix
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| eval: false
+SignalEval$confusion_report
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+SignalEval$confusion_report
+```
+:::
+
+::: {.callout-tip title="Question"}
+Q: Interpret each of the metrics for Long positions
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+A:
+
+For this table, a **predicted positive** means that the signal told us to go long. An **actual positive** means that the test-period return exceeded +0.25%, while an **actual negative** means that it fell below -0.25%. A "not-long" signal is either neutral or short.
+
+- **TP (True Positive = 77):** We went long, and the test-period return exceeded +0.25%.
+- **FP (False Positive = 59):** We went long, but the test-period return fell below -0.25%.
+- **FN (False Negative = 71):** We did not go long, but the test-period return exceeded +0.25%.
+- **TN (True Negative = 79):** We did not go long, and the test-period return fell below -0.25%.
+- **n (286):** The number of observations used in the long-versus-not-long classification: $77+59+71+79=286$. The other 14 of the original 300 observations had returns inside the neutral band and are excluded from this particular confusion matrix.
+- **Accuracy (0.55):** Approximately 55% of the included observations were classified correctly: $(TP+TN)/n$.
+- **Precision (0.57):** Among the observations for which we went long, 57% subsequently earned a return above +0.25%: $TP/(TP+FP)$.
+- **Recall (0.52):** Among the observations whose returns exceeded +0.25%, we went long 52% of the time: $TP/(TP+FN)$.
+- **Specificity (0.57):** Among the observations whose returns fell below -0.25%, we did not go long 57% of the time: $TN/(TN+FP)$.
+- **Type I error (0.43):** Among the observations whose returns fell below -0.25%, we nevertheless went long 43% of the time: $FP/(FP+TN)=1-\text{specificity}$.
+- **Type II error (0.48):** Among the observations whose returns exceeded +0.25%, we failed to go long 48% of the time: $FN/(FN+TP)=1-\text{recall}$.
+- **F1 score (0.54):** The harmonic mean of precision and recall. It summarizes how well the long signal identifies large positive returns while limiting incorrect long signals; higher is better.
+- **MCC (0.09):** The Matthews correlation coefficient summarizes all four confusion-matrix cells and ranges from -1 to +1. A value near zero indicates little classification skill; 0.09 therefore suggests only a weak positive relationship between the long signal and large positive test-period returns.
+:::
