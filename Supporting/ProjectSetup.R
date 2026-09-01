@@ -183,10 +183,8 @@ coefficient_table <- function(model) {
 }
 
 
-
-
 # Load other helper functions
-source(here("Supporting","Signal_Evaluation_SingleHoldOut.R"))
-#source(here("Supporting","Signal_Evaluation_MultipleHoldOut.R"))
-#source(here("Supporting","ConstructPortfolio.R"))
-#source(here("Supporting","DailyPerformanceStats.R"))
+source(here("Supporting", "Signal_Evaluation_SingleHoldOut.R"))
+source(here("Supporting", "Signal_Evaluation_MultipleHoldOut.R"))
+source(here("Supporting","ConstructPortfolio.R"))
+source(here("Supporting","DailyPerformanceStats.R"))
