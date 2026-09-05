@@ -1,0 +1,1565 @@
+---
+title: "SP500 Relative-Momentum Strategy"
+subtitle: "From a momentum feature to an implementable long/short portfolio"
+author: Mike Aguilar | https://www.linkedin.com/in/mike-aguilar-econ/ 
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute: 
+  warning: false
+  echo: true
+---
+
+# Background
+
+## Goal
+
+We take a 12-2 momentum feature on S&P 500 constituents and walk it, one layer at a time, into a single implementable relative-momentum 120/20 long/short portfolio, which we then evaluate against IVV.
+
+The emphasis is the *architecture* of that transformation; i.e. how a measured feature becomes a signal, a position, a set of strategy weights, and finally portfolio capital, and the *attribution* of the result. Along the way we also evaluate the quartile signal directly, both on a single holdout and walk-forward across the holdout window so the reader can gauge whether the traded signal carries any predictive power before it is turned into a portfolio. Given the short frozen sample, that evaluation is illustrative rather than a definitive verdict on momentum.
+
+The layers we keep distinct throughout are:
+
+$$
+\text{feature} \;\longrightarrow\; \text{signal} \;\longrightarrow\; \text{position} \;\longrightarrow\; \text{raw strategy weights} \;\longrightarrow\; \text{scaled strategy weights} \;\longrightarrow\; \text{portfolio weights}
+$$
+
+Key Assumptions:
+
+- Signal: a cross-sectional quartile rule: long the top quartile, short the bottom quartile, neutral in between. There is no absolute threshold.
+- Strategy: size positions based on relative momentum: $a_{i,t} = \lvert mom_{i,t} - \tilde{mom}_t \rvert$
+- Portfolio: 120/20 long short
+- A signal formed on a month's last trading day becomes effective on the first trading day of the next month and cannot earn the formation-date return.
+- Target weights are held constant through the evaluation month (frictionless daily rebalancing).
+
+## Architecture
+
+The document follows the order we work through in class.
+
+- **Housekeeping & settings** — load packages and the supporting functions in `R/`, then define one visible `settings` object (formation and evaluation periods, benchmark, sleeve budgets, labels, penalties).
+- **Data** — load the frozen inputs, then clean and engineer:
+  - S&P 500 constituents are frozen by `data-preparation/01-build-static-universe.R` into `data/sp500-static-universe.csv`.
+  - Daily adjusted closing prices for the constituents and the index (IVV) are frozen by `data-preparation/02-build-frozen-price-data.R` into `data/daily-adjusted-prices.rds`, and aggregated to month-end into `data/monthly-adjusted-prices.rds`.
+  - Engineering builds monthly simple returns and 12-2 momentum.
+- **EDA** — formation-time views (momentum distributions with quartile cutoffs, quartile signal counts, IVV context) plus distributional comparisons of the holdout return and formation momentum cross-sections, and the momentum → next-month-return relationship.
+- **Single hold out** — form the strategy on the **May 2026** month-end and evaluate over **June 2026**, showing *every* transformation inline, and evaluate the June quartile signal's efficacy (raw and benchmark-relative).
+- **Multiple hold out** — abstract the demonstrated construction into one small local function and roll the formation month forward (May→June, June→July, July→August), chaining the results into one continuous portfolio history, then evaluate the signal walk-forward across the three holdouts.
+
+## Notation
+
+We follow the portfolio-creation pipeline from the lecture notes:
+
+$$
+X_{i,t},\, Z_t \;\longrightarrow\; s_{i,t} \;\longrightarrow\; s^{pos}_{i,t} \;\longrightarrow\; w^{raw}_{i,t} \;\longrightarrow\; w^{scaled}_{i,t} \;\longrightarrow\; w^{p}_{i,t}
+$$
+
+| Symbol | Meaning | In this exercise |
+|------------------|--------------------------|----------------------------|
+| $X_{i,t},\, Z_t$ | Asset-specific and general features | 12-2 momentum $mom_{i,t}$ (IVV momentum as context) |
+| $s_{i,t}$ | Signal $\in \{-1, 0, +1\}$ | $+1$ if $mom_{i,t} > q_{0.75,t}$; $-1$ if $mom_{i,t} < q_{0.25,t}$; else $0$ |
+| $s^{pos}_{i,t}$ | Position after timing / exit rules | $s^{pos}_{i,t} = s_{i,t}$ (no extra position rule here) |
+| $w^{raw}_{i,t}$ | Signed pre-normalized position size | $w^{raw}_{i,t} = s^{pos}_{i,t}\,a_{i,t}$ — direction **and** relative size |
+| $w^{scaled}_{i,t}$ | Weights scaled within each sleeve | long sleeve sums to $+1$, short sleeve to $-1$ |
+| $w^{p}_{i,t}$ | Final portfolio weights (capital + leverage) | 120/20 budgets applied: $B_L w^{scaled}$ (long), $B_S w^{scaled}$ (short) |
+
+Other recurring symbols:
+
+| Symbol | Meaning |
+|------------------------------------|------------------------------------|
+| $q_{0.25,t},\ q_{0.75,t}$ | Cross-sectional 25th and 75th momentum percentiles at $t$ (R `quantile`, `type = 7`) |
+| $\tilde{mom}_t$ | Cross-sectional median momentum at $t$ |
+| $a_{i,t} = \lvert mom_{i,t} - \tilde{mom}_t \rvert$ | Relative momentum strength |
+| $G^{+}_t,\ G^{-}_t$ | Sum of positive raw weights; sum of $\lvert$negative raw weights$\rvert$ |
+| $B_L,\ B_S$ | Long and short budgets ($1.20$, $0.20$) |
+| $N^{+}_{t},\ N^{-}_{t}$ | Number of long and short selections at $t$ |
+| $R_{i,d}$ | Daily simple return of asset $i$ on day $d$ |
+| $R_{p,d} = \sum_i w^{p}_{i,t}\, R_{i,d}$ | Daily portfolio return under constant target weights |
+
+# Housekeeping
+
+Task: Load packages, source the supporting functions in `R/`, and define shared helpers (colors, `pct()`, `gt_compact()`, `attr_tab()`, etc..).
+
+```{r}
+#| label: setup
+
+suppressPackageStartupMessages(library(here))
+
+# Course-wide packages and helpers (tidyverse, lubridate, gt, scales, plotly, ...).
+source(here("Supporting", "ProjectSetup.R"))
+
+# ProjectSetup.R attaches packages after the tidyverse (e.g. mclust::count,
+# rugarch::reduce) that mask core verbs. Re-point the affected verbs to dplyr,
+# mirroring the `select <- dplyr::select` fix ProjectSetup.R already applies.
+count  <- dplyr::count
+filter <- dplyr::filter
+
+base <- here("Topics", "MomentumStrategy2")
+for (f in c("portfolio_engine.R", "performance_metrics.R", "attribution.R", "validation.R")) {
+  source(file.path(base, "R", f))
+}
+
+# Signal-evaluation engines (single- and multiple-holdout) used by the
+# "Signal Efficacy" sections; they consume a generic +1/0/-1 signal_position.
+source(here("Supporting", "Signal_Evaluation_SingleHoldOut.R"))
+source(here("Supporting", "Signal_Evaluation_MultipleHoldOut.R"))
+
+theme_set(theme_minimal(base_size = 12))
+
+bucket_colors <- c(
+  "Top Negative"   = "#a50f15",
+  "Other Negative" = "#fcae91",
+  "Other Positive" = "#a1d99b",
+  "Top Positive"   = "#006d2c"
+)
+
+strategy_color  <- "#2166ac"
+benchmark_color <- "black"
+
+pct <- function(x, acc = 0.1) percent(x, accuracy = acc)
+ppts <- function(x) round(x * 100, 1) |> format(nsmall = 1, trim = TRUE) |> paste0(" ppts")
+
+gt_compact <- function(df, title = NULL, subtitle = NULL) {
+  g <- gt(df)
+  if (!is.null(title)) g <- tab_header(g, title = title, subtitle = subtitle)
+  g |>
+    sub_missing(missing_text = "—") |>
+    cols_align(align = "center") |>
+    opt_row_striping()
+}
+
+# Security attribution chart + sleeve table for one period; used in the tabset.
+# Reads the continuous `contrib` / `port` objects built in the rolling section.
+attr_tab <- function(period, label) {
+  sec <- security_attribution(contrib, port, period)
+  p <- contributor_buckets(sec) |>
+    mutate(bucket = factor(bucket, levels = names(bucket_colors))) |>
+    ggplot(aes(x = contribution, y = reorder(ticker, contribution), fill = bucket)) +
+    geom_col() +
+    scale_fill_manual(values = bucket_colors) +
+    scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+    labs(x = "Linked contribution", y = NULL, fill = NULL,
+         title = paste0("Security attribution — 120/20 Strategy (", label, ")")) +
+    theme(legend.position = "bottom")
+  print(p)
+  sleeve_attribution(sec) |>
+    transmute(Sleeve = sleeve, Contribution = ppts(contribution)) |>
+    gt_compact()
+}
+```
+
+## Settings
+
+Task: Establish settings for the long and short budgets, benchmark ticker, and other items
+
+```{r}
+#| label: settings
+
+
+settings <- list(
+  B_L           = 1.20,   # long budget
+  B_S           = 0.20,   # short budget
+  benchmark     = "IVV",
+  annualization = 252,
+  min_risk_obs  = 15,     # below this, risk stats are illustrative only
+  lambda        = 0.5,    # turnover penalty
+  labels = c(
+    strategy  = "Relative-Momentum 120/20",
+    benchmark = "IVV Benchmark"
+  )
+)
+```
+
+Q: What do the long budget 1.20 and short budget 0.20 mean? If we changed those, would they impact i) signal, ii) strategy, iii) portfolio?
+
+A: 
+
+# Data
+
+## Load frozen data
+
+Task: Load the daily-adjusted-prices.rds, monthly-adjusted-prices.rds, and sp500-static-universe.csv files
+
+```{r}
+#| label: load-data
+
+
+daily   <- readRDS(file.path(base, "data", "?"))
+monthly <- readRDS(file.path(base, "data", "monthly-adjusted-prices.rds"))
+universe <- read_csv(file.path(base, "data", "sp500-static-universe.csv"),
+                     show_col_types = FALSE)
+```
+
+Task: Display the data description
+
+```{r}
+#| label: data-glimpse
+tibble(
+  Object = c("Static universe", "Daily adjusted prices", "Month-end adjusted prices"),
+  Rows = c(nrow(universe), nrow(daily), nrow(monthly)),
+  Tickers = c(n_distinct(universe$ticker), n_distinct(daily$ticker), n_distinct(monthly$ticker)),
+  `Date range` = c(
+    as.character(unique(universe$snapshot_date)),
+    paste(min(daily$date), "to", max(daily$date)),
+    paste(min(monthly$date), "to", max(monthly$date))
+  )
+) |>
+  gt_compact(title = "Frozen data loaded")
+```
+
+Q: Why might we need both monthly and daily observations in our setting?
+
+A: 
+
+## Holdout schedule
+
+The holdout schedule pairs each formation month with the month it is evaluated over. Exact trading dates are resolved from the loaded daily prices, not the calendar.
+
+Task: Form the holdout schedule using our custom build_holdout_schedule function
+
+```{r}
+#| label: holdout-schedule
+schedule <- build_holdout_schedule(
+  daily,
+  formation_months  = as.Date(c("2026-05-01", "2026-06-01", "2026-07-01")),
+  evaluation_months = as.Date(c("2026-06-01", "2026-07-01", "2026-08-01")),
+  benchmark = settings$benchmark
+)
+```
+
+Task: Display portfolio formation dates
+
+```{r}
+#| label: schedule-show
+schedule |>
+  transmute(
+    `Formation month`  = format(formation_month, "%b %Y"),
+    `Formation date`   = formation_date,
+    `Effective date`   = effective_date,
+    `Evaluation month` = format(evaluation_month, "%b %Y")
+  ) |>
+  gt_compact(title = "Explicit holdout schedule")
+```
+
+Q: What's the point of running build_holdout_schedule if we are already entering the dates?
+
+A: 
+
+## Data validation
+
+Task: Essential failures stop the render. The table below shows whether the principal data checks passed.
+
+```{r}
+#| label: validate-data
+required_month_ends <- seq(as.Date("2025-04-01"), as.Date("2026-05-01"), by = "month")
+eval_daily_dates <- daily |>
+  filter(ticker == settings$benchmark,
+         date >= as.Date("2026-06-01"), date <= as.Date("2026-08-31")) |>
+  pull(date) |> sort()
+
+data_checks <- validate_data(daily, monthly, universe, settings$benchmark,
+                             required_month_ends, eval_daily_dates)
+assert_checks(data_checks, "Data validation")
+
+data_checks |>
+  transmute(Check = check, Status = ifelse(passed, "PASS", "FAIL"), Detail = detail) |>
+  gt_compact(title = "Data validation") |>
+  tab_style(style = cell_text(color = "#006d2c", weight = "bold"),
+            locations = cells_body(columns = Status, rows = Status == "PASS"))
+```
+
+Q: Our dataset passes all checks. What might be a data issue that would cause trouble?
+
+A: 
+
+## Feature engineering
+
+### Monthly simple returns
+
+Task: Grab monthly returns only for the constituents
+
+```{r}
+#| label: monthly-returns
+monthly_returns <- monthly |>
+  filter(asset_role ?) |>
+  compute_monthly_returns()
+```
+
+Task: Display a small subset of those monthly returns
+
+```{r}
+? |>
+  filter(!is.na(monthly_return)) |>
+  slice_head(n = 5) |>
+  transmute(date, ticker, adjusted_price = round(adjusted_price, 2),
+            monthly_return = pct(monthly_return, 0.01)) |>
+  gt_compact()
+```
+
+### 12-2 momentum
+
+For a momentum observation dated $t$, $$mom_{i,t} = \prod_{k=2}^{12}(1 + R_{i,t-k}) - 1.$$ The month $t-1$ is skipped to avoid short-term reversal; each value uses exactly 11 monthly return factors.
+
+Task: Compute momentum for the monthly returns using the compute_momentum helper function
+
+```{r}
+#| label: momentum
+momentum_all <- compute_momentum(?)
+```
+
+Task: Create the object momentum_panel that filters momentum_all for only those periods for the formation months and retain only the month, ticker, and momentum value.
+
+```{r}
+momentum_panel <- momentum_all |>
+  ?(month %in% schedule$formation_month) |>
+  ?(month, ticker, momentum)
+
+head(momentum_panel)
+```
+
+Q: Which monthly returns enter the **May 2026** momentum value, and how many are there?
+
+A:
+
+
+
+# EDA
+
+The subsections below reuse a small set of summary-statistic helpers.
+
+Note: `e1071::kurtosis()` reports *excess* kurtosis (normal = 0) and `e1071::skewness()` matches the convention used by the signal-evaluation engine sourced in Housekeeping.
+
+```{r}
+#| label: eda-helpers
+compute_summary_stats <- function(x) {
+  tibble(
+    N         = sum(!is.na(x)),
+    Mean      = ?(x, na.rm = TRUE),
+    `Std Dev` = ?(x, na.rm = TRUE),
+    Skew      = e1071::skewness(x, na.rm = TRUE),
+    Kurtosis  = e1071::kurtosis(x, na.rm = TRUE),
+    Min       = min(x, na.rm = TRUE),
+    `5%`      = quantile(x, 0.05, na.rm = TRUE, names = FALSE),
+    `25%`     = quantile(x, 0.25, na.rm = TRUE, names = FALSE),
+    `50%`     = quantile(x, 0.50, na.rm = TRUE, names = FALSE),
+    `75%`     = quantile(x, 0.75, na.rm = TRUE, names = FALSE),
+    `95%`     = quantile(x, 0.95, na.rm = TRUE, names = FALSE),
+    Max       = max(x, na.rm = TRUE)
+  )
+}
+
+metric_order <- c("N", "Mean", "Std Dev", "Skew", "Kurtosis",
+                  "Min", "5%", "25%", "50%", "75%", "95%", "Max")
+
+# Contrast two or more named groups side by side, one column per group.
+summary_table <- function(...) {
+  groups <- list(...)
+  purrr::imap_dfr(groups, \(x, nm) compute_summary_stats(x) |> mutate(Group = nm)) |>
+    pivot_longer(-Group, names_to = "Metric", values_to = "Value") |>
+    pivot_wider(names_from = Group, values_from = Value) |>
+    mutate(Metric = factor(Metric, levels = metric_order)) |>
+    arrange(Metric)
+}
+
+# Summarize a single vector (e.g. a vector of z-scores).
+single_summary_table <- function(x) {
+  compute_summary_stats(x) |>
+    pivot_longer(everything(), names_to = "Metric", values_to = "Value") |>
+    mutate(Metric = factor(Metric, levels = metric_order)) |>
+    arrange(Metric)
+}
+```
+
+## Returns
+
+Task: Contrast the June 2026 holdout return cross-section against the full monthly-return history.
+
+```{r}
+#| label: eda-returns-table
+returns_eval <- monthly_returns |>
+  filter(month ? as.Date("2026-06-01"), !is.na(monthly_return)) |>
+  pull(monthly_return)
+
+returns_history <- monthly_returns |>
+  filter(month ? as.Date("2026-06-01"), !is.na(monthly_return)) |>
+  pull(monthly_return)
+
+summary_table(`Full History` = returns_history, `Holdout (Jun 2026)` = returns_eval) |>
+  gt_compact(title = "Constituent monthly returns: full history vs June 2026 holdout")
+```
+
+Task: Test whether mean returns differ between the holdout month and history.
+
+```{r}
+#| label: eda-returns-ttest
+# Welch's t-test (unequal variance), two-sided.
+?(returns_eval, returns_history)
+```
+
+Task: Overlay the two return densities.
+
+```{r}
+#| label: eda-returns-density
+bind_rows(
+  tibble(value = returns_history, Period = "Full History"),
+  tibble(value = returns_eval,    Period = "Holdout (Jun 2026)")
+) |>
+  ggplot(aes(value, fill = Period)) +
+  geom_density(alpha = 0.5) +
+  scale_x_continuous(labels = percent_format(accuracy = 1)) +
+  labs(title = "June 2026 holdout returns vs full history",
+       x = "Monthly simple return", y = "Density") +
+  theme(legend.position = "bottom")
+```
+
+Task: For each stock, z-score its June 2026 return against its own return history.
+
+```{r}
+#| label: eda-returns-z
+returns_hist_stats <- monthly_returns |>
+  filter(month < as.Date("2026-06-01"), !is.na(monthly_return)) |>
+  summarise(mean_ret = mean(monthly_return),
+            sd_ret   = sd(monthly_return), .by = ticker)
+
+returns_z <- monthly_returns |>
+  filter(month == as.Date("2026-06-01")) |>
+  left_join(returns_hist_stats, by = "ticker") |>
+  mutate(z_return = ?)
+
+single_summary_table(returns_z$z_return) |>
+  gt_compact(title = "Per-stock z-scores of June 2026 returns vs own history")
+```
+
+Q: Is the holdout month unusual, and why does that matter for evaluating the signal?
+
+A:
+
+
+## Momentum
+
+Task: Find the cutoffs used in the momentum signal
+
+```{r}
+#| label: eda-cutoffs
+cutoffs <- momentum_panel |>
+  group_by(formation = format(month, "%b %Y")) |>
+  summarise(
+    q25    = ?(momentum, 0.25, type = 7, na.rm = TRUE),
+    median = ?(momentum, na.rm = TRUE),
+    q75    = ?(momentum, 0.75, type = 7, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cutoffs |>
+  transmute(Formation = formation,
+            `25th pct` = pct(q25, 0.1),
+            Median = pct(median, 0.1),
+            `75th pct` = pct(q75, 0.1)) |>
+  gt_compact(title = "Cross-sectional momentum cutoffs at formation")
+```
+
+Task: Create histograms of momentum for each of the 3 hold out periods. Mark the 25th, 50th, and 75th quantiles.
+
+```{r}
+#| label: eda-dist
+cut_long <- cutoffs |>
+  pivot_longer(c(q25, median, q75), names_to = "stat", values_to = "x") |>
+  mutate(stat = recode(stat, q25 = "25th pct", median = "Median", q75 = "75th pct"))
+
+momentum_panel |>
+  mutate(formation = format(month, "%b %Y")) |>
+  ggplot(aes(momentum)) +
+  geom_histogram(bins = 40) +
+  geom_vline(data = cut_long, aes(xintercept = x, color = stat), linewidth = 0.8) +
+  facet_wrap(~ formation) +
+  scale_x_continuous(labels = percent_format(accuracy = 1)) +
+  scale_color_manual(values = c("25th pct" = "#a50f15", "Median" = "grey30", "75th pct" = "#006d2c")) +
+  labs(x = "12-2 momentum", y = "Count", color = NULL,
+       title = "Momentum distribution at each formation date",
+       subtitle = "Long = above 75th pct; Short = below 25th pct; Neutral in between") +
+  theme(legend.position = "bottom")
+```
+
+Task: Compute the number of Long, Neutral, and Short in each formation period.
+
+```{r}
+#| label: eda-counts
+momentum_panel |>
+  group_by(month) |>
+  mutate(
+    q25 = quantile(momentum, 0.25, type = 7, na.rm = TRUE),
+    q75 = quantile(momentum, 0.75, type = 7, na.rm = TRUE),
+    class = case_when(
+      is.na(momentum) ~ "Unavailable",
+      momentum > q75 ~ "Long",
+      momentum < q25 ~ "Short",
+      TRUE ~ "Neutral"
+    )
+  ) |>
+  ungroup() |>
+  mutate(formation = format(month, "%b %Y")) |>
+  count(formation, class) |>
+  pivot_wider(names_from = class, values_from = n, values_fill = 0) |>
+  gt_compact(title = "Quartile selection counts by formation month")
+```
+
+Q: Why 125 Long and 125 Short each formation month?
+
+A:
+
+
+
+Task: Compute the IVV's momentum at each formation date.
+
+```{r}
+#| label: eda-ivv
+monthly |>
+  filter(? == "benchmark") |>
+  compute_monthly_returns() |>
+  compute_momentum() |>
+  filter(month %in% schedule$formation_month) |>
+  transmute(`Formation` = format(month, "%b %Y"), `IVV 12-2 momentum` = pct(momentum, 0.1)) |>
+  gt_compact(title = "Benchmark momentum at formation")
+```
+
+With only \~18 months of price history, 12-2 momentum is computable for just five month-ends (Apr–Aug 2026), so a long per-stock momentum history is unavailable. We instead contrast the momentum cross-section across the three formation months directly.
+
+Task: Contrast the momentum cross-section across the three formation months.
+
+```{r}
+#| label: eda-momentum-table
+summary_table(
+  `May 2026` = momentum_panel |> filter(month == as.Date("?")) |> pull(momentum),
+  `Jun 2026` = momentum_panel |> filter(month == as.Date("?")) |> pull(momentum),
+  `Jul 2026` = momentum_panel |> filter(month == as.Date("?")) |> pull(momentum)
+) |>
+  gt_compact(title = "12-2 momentum by formation month")
+```
+
+Q: What would a shift in the momentum distribution across formation months imply for the strategy?
+
+A:
+
+
+
+## Connecting momentum and returns
+
+Task: Scatter May-formation momentum against the June return it forecasts, with a linear fit.
+
+```{r}
+#| label: eda-scatter
+momentum_returns_scatter <- momentum_panel |>
+  filter(month == as.Date("2026-05-01")) |>
+  select(ticker, momentum) |>
+  inner_join(
+    monthly_returns |>
+      filter(month == as.Date("2026-06-01")) |>
+      select(ticker, monthly_return),
+    by = "ticker"
+  )
+
+ggplot(momentum_returns_scatter, aes(x = momentum, y = monthly_return)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = strategy_color) +
+  scale_x_continuous(labels = percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(title = "June 2026 return vs May 2026 formation momentum",
+       x = "12-2 momentum (May 2026)", y = "June 2026 return")
+```
+
+Task: Identify the highest- and lowest-momentum names at the May formation and plot their indexed monthly prices around the holdout.
+
+```{r}
+#| label: eda-extremes
+extreme_momentum <- momentum_panel |>
+  filter(month == as.Date("2026-05-01"), !is.na(momentum)) |>
+  filter(momentum == max(momentum) | momentum == min(momentum)) |>
+  select(ticker, momentum)
+
+indexed_prices <- monthly_returns |>
+  filter(ticker %in% extreme_momentum$ticker,
+         month >= as.Date("2025-06-01"), month <= as.Date("2026-06-01")) |>
+  group_by(ticker) |>
+  arrange(month, .by_group = TRUE) |>
+  mutate(indexed_price = 100 * adjusted_price / adjusted_price[month == as.Date("2026-05-01")]) |>
+  ungroup()
+
+ggplot(indexed_prices, aes(x = month, y = indexed_price, color = ticker)) +
+  geom_line() +
+  geom_vline(xintercept = as.Date("2026-05-01"), linetype = "dashed") +
+  labs(title = "Indexed prices: highest vs lowest May-2026 momentum names",
+       subtitle = "Indexed to 100 at the May 2026 formation (dashed line)",
+       x = NULL, y = "Indexed price (base = 100)", color = "Ticker")
+```
+
+Q: How does the scatter relate to the efficacy of the signal?
+
+A:
+
+
+
+# Single HoldOut
+
+Let's focus on the May 2026 formation and the June 2026 hold out.
+
+Task: Use the custom compute_asset_daily_returns to compute the returns for each day.
+
+```{r}
+#| label: june-setup
+june_row <- schedule |> ?(evaluation_month == as.Date("2026-06-01"))
+asset_returns <- compute_asset_daily_returns(?)
+```
+
+## Features
+
+Task: Grab only the June 2026 momentum from the momentum panel for every eiligible constituent.
+
+```{r}
+#| label: june-feature
+june_momentum <- momentum_panel |>
+  filter(? == june_row$formation_month) |>
+  select(ticker, momentum)
+```
+
+## Signal
+
+### Cutoffs and median
+
+We summarize the cross-section with three order statistics, using R's standard empirical quantile convention (`type = 7`) consistently. $$
+q_{0.25,t} = Q_{0.25}\big(\{mom_{j,t}\}_j\big), \quad
+q_{0.75,t} = Q_{0.75}\big(\{mom_{j,t}\}_j\big), \quad
+\tilde{mom}_t = \mathrm{median}_j\big(mom_{j,t}\big).
+$$
+
+Task: Compute the 25,50,75 quantiles
+
+```{r}
+#| label: june-cutoffs
+june_q25 <- quantile(june_momentum$momentum, ?, type = 7, na.rm = TRUE)
+june_q75 <- quantile(june_momentum$momentum, ?, type = 7, na.rm = TRUE)
+june_med <- median(june_momentum$momentum, na.rm = TRUE)
+c(q25 = june_q25, median = june_med, q75 = june_q75)
+```
+
+### Signal Construction
+
+The signal converts momentum into **selection and direction** using strict inequalities against the quartile cutoffs. Securities exactly equal to either cutoff stay neutral. $$
+s_{i,t} =
+\begin{cases}
++1 & mom_{i,t} > q_{0.75,t},\\
+-1 & mom_{i,t} < q_{0.25,t},\\
+0 & \text{otherwise.}
+\end{cases}
+$$
+
+Task: Generate the signal
+
+```{r}
+#| label: june-signal
+june_panel <- june_momentum |>
+  mutate(
+    q25 = june_q25,
+    q75 = june_q75,
+    median_mom = june_med,
+    signal = case_when(
+      is.na(momentum) ~ NA_integer_,
+      momentum > q75 ~ 1L,
+      momentum < q25 ~ -1L,
+      TRUE ~ 0L
+    )
+  )
+```
+
+Q: Why is this a *relative* momentum signal rather than an *absolute* one?
+
+A:
+
+
+### Position
+
+The position layer determines whether and when the signal is acted upon. In this exercise there is no separate conviction threshold, timing filter, or regime filter, so $$
+s^{pos}_{i,t} = s_{i,t}.
+$$
+
+Task: Set the position equal to the signal
+
+```{r}
+#| label: june-position
+june_panel <- june_panel |>
+  mutate(position = ?)
+```
+
+Q: Why keep $s^{pos}$ as a separate object if it equals $s$?
+
+A:
+
+
+## Signal Evaluation
+
+Before turning the signal into portfolio weights, we evaluate the quartile signal itself on the June 2026 holdout using the single-holdout engine sourced in Housekeeping. The signal is formed from May 2026 momentum (`june_panel$signal`) and scored against realized June 2026 returns. Unlike an absolute-threshold signal, the quartile rule leaves the middle two quartiles neutral, so coverage is well below 100% and the "Acted Only" view differs from "Overall".
+
+Task: Assemble the evaluation inputs and shared metadata, then run the single-holdout evaluation with `return_threshold = 0`.
+
+```{r}
+#| label: june-eval
+Meta <- list(assetname = "asset", signalname = "Relative-Momentum (quartile)")
+return_threshold <- 0
+
+june_signal_position <- june_panel |>
+  filter(!is.na(signal)) |>
+  transmute(ticker, signal_position = signal)
+
+june_test_returns <- monthly_returns |>
+  filter(month == june_row$evaluation_month) |>
+  transmute(ticker, test_returns = monthly_return)
+
+SignalEval <- signal_evaluation_singleholdout(
+  test_returns     = june_test_returns,
+  Meta             = Meta,
+  return_threshold = return_threshold,
+  signal_position  = june_signal_position
+)
+```
+
+Q: What if set return threshold very large? What is the (dis)advantage?
+
+A:
+
+
+
+Task: Display the trade results.
+
+```{r}
+#| label: june-eval-trades
+SignalEval$?
+```
+
+Q: Interpret the trade results. Can you comment on how active was the signal? Connect that to “coverage”.
+
+A:
+
+
+
+Task: Display the return distribution by signal (Long / Neutral / Short).
+
+```{r}
+#| label: june-eval-violin-signal
+SignalEval$plots$?
+```
+
+Q: What do you notice about the distribution of Longs relative to Neutrals and Shorts?
+
+A: 
+
+Q: How might we augment the return_threshold in light of this finding?
+
+A: 
+
+Task: Display the return distribution by signal, faceted by realized-return bucket.
+
+```{r}
+#| label: june-eval-violin-facet
+SignalEval$plots$facet
+```
+
+Task: Display the return distribution for each signal × outcome intersection.
+
+```{r}
+#| label: june-eval-violin-combo
+SignalEval$plots$combo
+```
+
+Task: Display the hit table.
+
+```{r}
+#| label: june-eval-hit
+SignalEval$hit_table
+```
+
+Q: Interpret the Hit Rate of this signal.
+
+A:
+
+
+Task: Display the information coefficient.
+
+```{r}
+#| label: june-eval-ic
+SignalEval$?
+```
+
+Q: Interpret the IC.
+
+A:
+
+
+
+Task: Display the confusion report.
+
+```{r}
+#| label: june-eval-confusion
+SignalEval$confusion_report
+```
+
+Q: Interpret each row of the confusion matrix; skip the f1 and mcc.
+
+A:
+
+Q: Focus on the Long-versus-Not-Long classification. Recall the concepts of Type I and Type II errors from hypothesis testing. What is the implicit null hypothesis in this setting? Keep in mind that we are using hypothesis-testing language only as an analogy; the signal is not conducting a formal statistical test.
+
+A:
+
+### Evaluate relative to benchmark
+
+In the following we will construct excess returns; constituent return minus the benchmark and then rerun the signal construction and evaluation.
+
+Q: What is the motivation for using excess returns?
+
+A:
+
+
+
+Task: Subtract the IVV June return from each constituent and re-run the evaluation.
+
+```{r}
+#| label: june-eval-benchmark
+june_index_return <- monthly |>
+  filter(asset_role == "benchmark") |>
+  compute_monthly_returns() |>
+  filter(month == june_row$evaluation_month) |>
+  pull(monthly_return)
+
+june_excess_returns <- june_test_returns |>
+  mutate(test_returns = ?)
+
+SignalEvalBenchmark <- signal_evaluation_singleholdout(
+  test_returns     = june_excess_returns,
+  Meta             = Meta,
+  return_threshold = 0,
+  signal_position  = june_signal_position
+)
+```
+
+Task: Display the benchmark-relative hit table.
+
+```{r}
+#| label: june-eval-benchmark-hit
+SignalEvalBenchmark$hit_table
+```
+
+Q: What does the Hit Rate on excess returns suggest?
+
+A: 
+
+Q: Why focus on Acted only when comparing excess returns to raw returns?
+
+A: 
+
+Task: Display the information coefficient table.
+
+```{r}
+#| label: june-eval-benchmark-ic
+SignalEvalBenchmark$summary_ic_tbl
+```
+
+Q: Why is the cross-sectional IC essentially unchanged when we switch to excess returns?
+
+A:
+
+
+## Strategy
+
+### Relative momentum strength
+
+Relative strength measures how far a security's momentum lies from the center of the formation-date cross-section: $$
+a_{i,t} = \lvert mom_{i,t} - \tilde{mom}_t \rvert
+$$
+
+Task: Add relative momentum to the June panel
+
+```{r}
+#| label: june-relstrength
+june_panel <- june_panel |>
+  mutate(relative_strength = abs(momentum - median_mom))
+```
+
+### Raw strategy weights
+
+The raw weight is where the strategy goes **beyond copying the signal**: it keeps the signal's direction but also sets relative size from $a_{i,t}$. $$
+w^{raw}_{i,t} = s^{pos}_{i,t}\, a_{i,t} = s^{pos}_{i,t}\,\lvert mom_{i,t} - \tilde{mom}_t \rvert.
+$$
+
+Task: Construct the strategy raw weight
+
+```{r}
+#| label: june-raw
+june_panel <- june_panel |>
+  mutate(raw_weight = as.numeric(position) * ?)
+```
+
+Q: How does $w^{raw}$ differ from the signal?
+
+A:
+
+
+
+### Scaled strategy weights
+
+The long and short sleeves are normalized **separately** so each sleeve's shares sum to one in magnitude: $$
+G^{+}_t = \!\!\sum_{j:\,w^{raw}_{j,t}>0}\!\! w^{raw}_{j,t}, \quad
+G^{-}_t = \!\!\sum_{j:\,w^{raw}_{j,t}<0}\!\! \lvert w^{raw}_{j,t}\rvert,
+$$ $$
+w^{scaled}_{i,t} =
+\begin{cases}
+w^{raw}_{i,t}/G^{+}_t & w^{raw}_{i,t} > 0,\\
+w^{raw}_{i,t}/G^{-}_t & w^{raw}_{i,t} < 0,\\
+0 & w^{raw}_{i,t} = 0,
+\end{cases}
+$$ so that $\sum_{i:\,w^{scaled}>0} w^{scaled}_{i,t} = 1$ and $\sum_{i:\,w^{scaled}<0} w^{scaled}_{i,t} = -1$.
+
+Q: What is the motivation for normalizing the sleeves separarely? What if we normalized all the raw weights together?
+
+A:
+
+
+
+Task: Compute per-sleeve gross sums and normalize so the long sleeve sums to +1 and the short sleeve to -1.
+
+```{r}
+#| label: june-scaled
+june_Gpos <- sum(june_panel$raw_weight[june_panel$raw_weight > 0], na.rm = TRUE)
+june_Gneg <- sum(abs(june_panel$raw_weight[june_panel$raw_weight < 0]), na.rm = TRUE)
+
+june_panel <- june_panel |>
+  mutate(
+    scaled_weight = case_when(
+      is.na(raw_weight) ~ NA_real_,
+      raw_weight > 0 ~ ? ,
+      raw_weight < 0 ~ ?,
+      TRUE ~ 0
+    )
+  )
+```
+
+Task: Display june_Gpos and june_Gneg
+
+```{r}
+june_Gpos
+june_Gneg
+```
+
+Q: What is the value of june_Gpos and june_Gneg? What do these value mean?
+
+A:
+
+
+Task: Display the head of the june_panel
+
+```{r}
+head(june_panel)
+```
+
+Q: Interpret the raw weight and scaled weight for ABT.
+
+A:
+
+
+Q: What information does $w^{scaled}$ contain, and what does it *not* yet contain?
+
+A:
+
+
+
+## Portfolio
+
+The 120/20 decision lives **exclusively** in the portfolio layer. Because short scaled weights are already negative, we multiply them by the *positive* budget $B_S$ (no extra sign): $$
+w^{p}_{i,t} =
+\begin{cases}
+B_L\, w^{scaled}_{i,t} & w^{scaled}_{i,t} > 0,\\
+B_S\, w^{scaled}_{i,t} & w^{scaled}_{i,t} < 0,\\
+0 & w^{scaled}_{i,t} = 0.
+\end{cases}
+$$
+
+Task: Apply the 120/20 sleeve budgets to the scaled weights to produce the final portfolio weights.
+
+```{r}
+#| label: june-portfolio
+june_panel <- june_panel |>
+  mutate(
+    portfolio_weight = case_when(
+      is.na(scaled_weight) ~ NA_real_,
+      scaled_weight > 0 ~ settings$B_L * ?,
+      scaled_weight < 0 ~ settings$B_S * ?,
+      TRUE ~ 0
+    ),
+    formation_date   = june_row$formation_date,
+    effective_date   = june_row$effective_date,
+    evaluation_month = june_row$evaluation_month
+  )
+```
+
+Q: Why does the 120/20 rule belong in $w^{p}$ and not earlier — and why is the portfolio 140% gross but 100% net?
+
+A:
+
+
+
+## Summary
+
+### Tracing the transformation
+
+Task: Trace representative **long**, **neutral**, and **short** names through every layer so the full feature → portfolio transformation is legible in one place.
+
+```{r}
+#| label: june-trace
+trace_ids <- bind_rows(
+  june_panel |> filter(position == 1L)  |> arrange(desc(momentum)) |> slice_head(n = 2),
+  june_panel |> filter(position == 0L)  |> arrange(abs(momentum - median_mom)) |> slice_head(n = 2),
+  june_panel |> filter(position == -1L) |> arrange(momentum) |> slice_head(n = 2)
+)
+
+trace_ids |>
+  transmute(
+    ticker,
+    momentum = pct(momentum, 0.1),
+    `25th pct` = pct(q25, 0.1),
+    median = pct(median_mom, 0.1),
+    `75th pct` = pct(q75, 0.1),
+    signal, position,
+    `rel. strength` = round(relative_strength, 3),
+    raw_weight = round(raw_weight, 3),
+    scaled_weight = round(scaled_weight, 4),
+    portfolio_weight = round(portfolio_weight, 4)
+  ) |>
+  gt_compact(title = "Feature to portfolio weight (representative long / neutral / short names)")
+```
+
+### Exposure reconciliation
+
+Task: Reconcile the June portfolio exposures (long, short, gross, net) against the 120/20 mandate.
+
+```{r}
+#| label: june-exposure
+exposure_summary(june_panel) |>
+  transmute(
+    `# Long` = n_long, `# Short` = n_short,
+    Long = pct(long_exposure), Short = pct(short_exposure),
+    Gross = pct(gross_exposure), Net = pct(net_exposure)
+  ) |>
+  gt_compact(title = "June exposure reconciliation",
+             subtitle = "Long 120%, short -20%, gross 140%, net 100%")
+```
+
+Q: Interpret each column of this table.
+
+A:
+
+
+
+### Strategy evaluation
+
+We hold the June target weights constant through the month (frictionless daily rebalancing) and compute daily security contributions and portfolio returns from the **final portfolio weights**: $$
+C_{i,d} = w^{p}_{i,t}\, R_{i,d}, \qquad R_{p,d} = \sum_i C_{i,d}.
+$$
+
+Task: Compute daily security contributions, portfolio returns, and the benchmark's daily returns for June.
+
+```{r}
+#| label: june-returns
+june_contrib <- build_daily_contributions(june_panel, asset_returns)
+june_port    <- aggregate_portfolio_returns(june_contrib)
+june_bench   <- benchmark_daily_returns(asset_returns, settings$benchmark, june_port$date)
+```
+
+Task: Summarize June performance versus IVV (total return, active return, volatility, Sharpe, max drawdown, beta).
+
+```{r}
+#| label: june-perf
+performance_metrics(june_port, june_bench, settings, settings$labels["strategy"]) |>
+  transmute(
+    Portfolio = portfolio,
+    `Total return` = pct(total_return, 0.01),
+    `Active vs IVV` = ppts(?),
+    `Ann. vol` = pct(ann_volatility),
+    Sharpe = round(sharpe, 2),
+    `Max DD` = pct(max_drawdown, 0.01),
+    Beta = round(beta, 2)
+  ) |>
+  gt_compact(title = "June performance vs IVV",
+             subtitle = "One month of daily data: risk statistics are illustrative")
+```
+
+Q: Describe the strategy via the performance metrics.
+
+A:
+
+
+
+Task: Plot the June growth of \$100 for the strategy versus IVV.
+
+```{r}
+#| label: june-growth
+june_curves <- bind_rows(
+  june_port  |> transmute(date, index = equity_index, Series = settings$labels["strategy"]),
+  june_bench |> transmute(date, index = benchmark_index, Series = settings$labels["benchmark"])
+)
+anchor <- june_curves |> distinct(Series) |> mutate(date = june_row$formation_date, index = 100)
+
+bind_rows(anchor, june_curves) |>
+  ggplot(aes(date, index, color = Series)) +
+  geom_hline(yintercept = 100, color = "grey70") +
+  geom_line(aes(linetype = Series == settings$labels["benchmark"]), linewidth = 0.9) +
+  scale_linetype_manual(values = c("solid", "dashed"), guide = "none") +
+  scale_color_manual(values = setNames(c(strategy_color, benchmark_color),
+                                       settings$labels[c("strategy", "benchmark")])) +
+  labs(x = NULL, y = "Growth of $100", color = NULL, title = "June: growth of $100") +
+  theme(legend.position = "bottom")
+```
+
+### Attribution analysis
+
+Security and sleeve attribution use the **portfolio weights** and are Carino-linked so the linked contributions reconcile geometrically to the compounded portfolio return.
+
+Task: Compute and chart June security attribution (Carino-linked) by contributor bucket.
+
+```{r}
+#| label: june-attr
+june_sec    <- security_attribution(june_contrib, june_port)
+june_sleeve <- sleeve_attribution(june_sec)
+
+contributor_buckets(june_sec) |>
+  mutate(bucket = factor(bucket, levels = names(bucket_colors))) |>
+  ggplot(aes(x = contribution, y = reorder(ticker, contribution), fill = bucket)) +
+  geom_col() +
+  scale_fill_manual(values = bucket_colors) +
+  scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+  labs(x = "Linked contribution", y = NULL, fill = NULL,
+       title = "June security attribution — Relative-Momentum 120/20") +
+  theme(legend.position = "bottom")
+```
+
+Q: What's the purpose of the Carino-linking?
+
+A: 
+
+Task: Summarize June sleeve-level attribution.
+
+```{r}
+#| label: june-sleeve
+june_sleeve |>
+  transmute(Sleeve = sleeve, Contribution = ppts(contribution)) |>
+  gt_compact(title = "June sleeve attribution")
+```
+
+Q: Interpret these contributions.
+
+A:
+
+
+
+Task: Perform quick reconciliation checks
+
+```{r}
+#| label: june-recon
+june_active <- active_daily_returns(june_port, june_bench)
+june_mc <- monthly_and_cumulative(june_port)
+june_checks <- bind_rows(
+  validate_weights(june_panel),
+  validate_returns(june_contrib, june_port, june_active, june_mc, june_row),
+  validate_attribution(june_sec, june_sleeve, june_port)
+)
+assert_checks(june_checks, "June reconciliation")
+june_checks |>
+  transmute(Check = check, Status = ifelse(passed, "PASS", "FAIL"), Detail = detail) |>
+  gt_compact(title = "June reconciliation checks")
+```
+
+# Multiple Hold outs
+
+## Abstracting the construction
+
+Let's create a local function to reproduce the single holdout approach in a loop.
+
+Task: Define a local `build_portfolio_panel()` function that reproduces the inline single-holdout construction (signal → position → raw → scaled → portfolio weights).
+
+```{r}
+#| label: build-portfolio-panel
+build_portfolio_panel <- function(momentum_df) {
+  # Cutoffs and median of this formation-date cross-section (type-7 quantiles).
+  q25 <- quantile(momentum_df$momentum, 0.25, type = 7, na.rm = TRUE)
+  q75 <- quantile(momentum_df$momentum, 0.75, type = 7, na.rm = TRUE)
+  med <- median(momentum_df$momentum, na.rm = TRUE)
+
+  panel <- momentum_df |>
+    mutate(
+      q25 = q25,
+      q75 = q75,
+      median_mom = med,
+      # signal: relative quartile selection, strict inequalities, ties neutral
+      signal = case_when(
+        is.na(momentum) ~ NA_integer_,
+        momentum > q75 ~ 1L,
+        momentum < q25 ~ -1L,
+        TRUE ~ 0L
+      ),
+      # position equals signal (no extra conviction/timing/regime rule)
+      position = signal,
+      # relative strength: distance from the cross-sectional median
+      relative_strength = abs(momentum - median_mom),
+      # raw weight: signed, magnitude from relative strength
+      raw_weight = as.numeric(position) * relative_strength
+    )
+
+  # per-sleeve gross sums for normalization
+  Gpos <- sum(panel$raw_weight[panel$raw_weight > 0], na.rm = TRUE)
+  Gneg <- sum(abs(panel$raw_weight[panel$raw_weight < 0]), na.rm = TRUE)
+
+  panel |>
+    mutate(
+      # scaled weight: long sleeve sums to +1, short sleeve to -1
+      scaled_weight = case_when(
+        is.na(raw_weight) ~ NA_real_,
+        raw_weight > 0 ~ raw_weight / Gpos,
+        raw_weight < 0 ~ raw_weight / Gneg,
+        TRUE ~ 0
+      ),
+      # portfolio weight: apply the 120/20 sleeve budgets
+      portfolio_weight = case_when(
+        is.na(scaled_weight) ~ NA_real_,
+        scaled_weight > 0 ~ settings$B_L * scaled_weight,
+        scaled_weight < 0 ~ settings$B_S * scaled_weight,
+        TRUE ~ 0
+      )
+    )
+}
+```
+
+We apply that function separately at each of the three formation dates, recomputing the signal and portfolio weights each month. The May formation is evaluated in June, the June formation in July, and the July formation in August. We then combine these three monthly holdouts into one continuous June–August portfolio history.
+
+Task: Map the construction across all schedule rows to build one continuous portfolio history, then compute contributions, portfolio returns, and benchmark returns.
+
+```{r}
+#| label: continuous-build
+panel <- build_complete_panel(momentum_panel, schedule, build_portfolio_panel)
+
+contrib <- build_daily_contributions(panel, asset_returns)
+port    <- aggregate_portfolio_returns(contrib)
+bench   <- benchmark_daily_returns(asset_returns, settings$benchmark, port$date)
+```
+
+## Strategy performance
+
+Task: Build a side-by-side performance summary for the strategy and IVV. Report each portfolio’s total return (using raw, not excess returns), annualized volatility, maximum drawdown, and Sharpe ratio. Also report the strategy’s active return relative to IVV, monthly reconstitution turnover, and turnover-adjusted Sharpe ratio.
+
+```{r}
+#| label: dash-summary
+to_events <- turnover_events(panel, schedule)
+wk        <- weekly_turnover(to_events)
+
+strat_summ <- performance_metrics(port, bench, settings, settings$labels["strategy"]) |>
+  mutate(avg_weekly_to = wk$avg_weekly,
+         sr_to = turnover_adjusted_sharpe(sharpe, avg_weekly_to, settings))
+
+bench_summ <- performance_metrics(
+  bench |> transmute(date, evaluation_month = floor_date(date, "month"),
+                     portfolio_return = benchmark_return),
+  settings = settings, label = settings$labels["benchmark"]
+)
+
+bind_rows(strat_summ, bench_summ) |>
+  transmute(
+    Portfolio = portfolio,
+    `Total return` = pct(total_return, 0.01),
+    `Active vs IVV` = ifelse(is.na(active_return), NA, ppts(active_return)),
+    `Ann. vol` = pct(ann_volatility),
+    `Max DD` = pct(max_drawdown, 0.01),
+    Sharpe = round(sharpe, 2),
+    `Turnover (wk)` = ifelse(is.na(avg_weekly_to), NA, round(avg_weekly_to, 3)),
+    `Sharpe (TO-adj)` = ifelse(is.na(sr_to), NA, round(sr_to, 2))
+  ) |>
+  gt_compact(title = "Performance summary (Jun-Aug 2026)",
+             subtitle = "~3 months of daily data: risk and relative statistics are illustrative")
+```
+
+## Monthly and cumulative returns
+
+Task: Tabulate monthly and cumulative returns for the strategy and benchmark.
+
+```{r}
+#| label: dash-monthly
+monthly_row <- function(port, label) {
+  mc <- monthly_and_cumulative(port)
+  mc$monthly |>
+    mutate(Portfolio = label, month = format(evaluation_month, "%b")) |>
+    select(Portfolio, month, monthly_return) |>
+    pivot_wider(names_from = month, values_from = monthly_return) |>
+    mutate(Cumulative = mc$cumulative)
+}
+bench_port <- bench |> transmute(date, evaluation_month = floor_date(date, "month"),
+                                 portfolio_return = benchmark_return)
+bind_rows(
+  monthly_row(port, settings$labels["strategy"]),
+  monthly_row(bench_port, settings$labels["benchmark"])
+) |>
+  mutate(across(where(is.numeric), ~ pct(.x, 0.01))) |>
+  gt_compact(title = "Monthly and cumulative returns")
+```
+
+## Growth of \$100
+
+Task: Plot the continuous growth of \$100 for the strategy versus IVV.
+
+```{r}
+#| label: dash-growth
+curves <- bind_rows(
+  port  |> transmute(date, index = equity_index, Series = settings$labels["strategy"]),
+  bench |> transmute(date, index = benchmark_index, Series = settings$labels["benchmark"])
+)
+anchor <- curves |> distinct(Series) |> mutate(date = schedule$formation_date[1], index = 100)
+
+p_growth <- bind_rows(anchor, curves) |>
+  ggplot(aes(date, index, color = Series)) +
+  geom_hline(yintercept = 100, color = "grey70") +
+  geom_line(linewidth = 0.9) +
+  scale_color_manual(values = setNames(c(strategy_color, benchmark_color),
+                                       settings$labels[c("strategy", "benchmark")])) +
+  labs(x = NULL, y = "Growth of $100", color = NULL,
+       title = "Continuous growth of $100 (Jun-Aug 2026)") +
+  theme(legend.position = "bottom")
+ggplotly(p_growth)
+```
+
+## Portfolio composition
+
+Task: Summarize monthly portfolio composition (counts, exposures, effective bets, top-10 concentration).
+
+```{r}
+#| label: dash-composition
+composition_metrics(panel) |>
+  transmute(
+    Month = format(evaluation_month, "%b %Y"),
+    Long = n_long, Short = n_short, Total = n_total,
+    Gross = pct(gross_exposure), Net = pct(net_exposure),
+    `Eff. bets` = round(effective_bets, 0),
+    `Top-10 conc.` = pct(top10_concentration, 0.1)
+  ) |>
+  gt_compact(title = "Relative-Momentum 120/20 composition")
+```
+
+Q: Explain the number of effective bets in our case.
+
+A:
+
+## Turnover
+
+Turnover here is **monthly target-weight (reconstitution) turnover**: the sum of absolute changes in $w^{p}$ between successive monthly constructions. Because returns are computed under constant target weights with frictionless daily rebalancing, this measure captures only the reconstitution trades at each formation; it does *not* capture the additional trades that would be required to restore target weights every day as returns cause the weights to drift.
+
+Task: Report monthly target-weight (reconstitution) turnover at each formation.
+
+```{r}
+#| label: dash-turnover
+to_events |>
+  filter(turnover > 0) |>
+  transmute(Change = paste0("→ ", format(evaluation_month, "%b")),
+            `Effective date` = effective_date,
+            `Reconstitution turnover` = round(turnover, 3)) |>
+  gt_compact(title = "Monthly target-weight (reconstitution) turnover")
+```
+
+Q: Interpret the turnover in our case.
+
+A:
+
+To make the roll-forward concrete, the table below follows a handful of names whose **signal changes** across the three formation dates, showing how momentum, signal, and portfolio weight move as the formation month advances.
+
+Task: Follow a few names whose signal changes across formations, showing how momentum, signal, and portfolio weight move.
+
+```{r}
+#| label: dash-rollforward
+changing <- panel |>
+  group_by(ticker) |>
+  summarise(n_states = n_distinct(signal), .groups = "drop") |>
+  filter(n_states > 1) |>
+  slice_head(n = 4) |>
+  pull(ticker)
+
+panel |>
+  filter(ticker %in% changing) |>
+  arrange(ticker, evaluation_month) |>
+  transmute(
+    Ticker = ticker,
+    Formation = format(formation_date, "%b %Y"),
+    Momentum = pct(momentum, 0.1),
+    Signal = signal,
+    `Portfolio weight` = round(portfolio_weight, 4)
+  ) |>
+  gt_compact(title = "Selected names as the formation month rolls forward",
+             subtitle = "Tickers whose quartile selection changes across May / Jun / Jul formations")
+```
+
+## Security and sleeve attribution
+
+Attribution is available for the full period and for each month. The same selection controls the security chart and the sleeve table.
+
+Task: Show the security attribution chart and sleeve table for the full June–August period and for each individual month.
+
+```{r}
+#| label: attr-code
+#| output: false
+
+attr_tab("all", "Jun–Aug")
+attr_tab("2026-06-01", "June")
+attr_tab("2026-07-01", "July")
+attr_tab("2026-08-01", "August")
+```
+
+::: panel-tabset
+### All
+
+```{r}
+#| label: attr-all-output
+#| echo: false
+
+attr_tab("all", "Jun–Aug")
+```
+
+### June
+
+```{r}
+#| label: attr-june-output
+#| echo: false
+
+attr_tab("2026-06-01", "June")
+```
+
+### July
+
+```{r}
+#| label: attr-july-output
+#| echo: false
+
+attr_tab("2026-07-01", "July")
+```
+
+### August
+
+```{r}
+#| label: attr-august-output
+#| echo: false
+
+attr_tab("2026-08-01", "August")
+```
+:::
+
+## Drawdown
+
+Task: Plot the underwater (drawdown) curves for the strategy versus IVV.
+
+```{r}
+#| label: dash-drawdown
+dd <- bind_rows(
+  port  |> transmute(date, drawdown, Series = settings$labels["strategy"]),
+  bench |> transmute(date, drawdown = benchmark_drawdown, Series = settings$labels["benchmark"])
+)
+p_dd <- dd |>
+  ggplot(aes(date, drawdown, color = Series)) +
+  geom_line(linewidth = 0.8) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_color_manual(values = setNames(c(strategy_color, benchmark_color),
+                                       settings$labels[c("strategy", "benchmark")])) +
+  labs(x = NULL, y = "Drawdown", color = NULL, title = "Underwater plot") +
+  theme(legend.position = "bottom")
+ggplotly(p_dd)
+```
+
+## Signal Efficacy (Walk-Forward)
+
+The single-holdout evaluation scores one month. Because the quartile signal is rebuilt at each formation, we can evaluate it across all three holdouts (Jun/Jul/Aug 2026) with the multiple-holdout engine, which loops the single-holdout evaluation over the shared evaluation dates.
+
+Task: Re-key the continuous `panel` signal to its evaluation month, build the matching monthly-return series, and run the walk-forward evaluation. Use our signal_evaluation_multipleholdout function.
+
+```{r}
+#| label: multi-eval
+signal_position_ts <- panel |>
+  filter(!is.na(signal)) |>
+  transmute(date = evaluation_month, ticker, signal_position = signal)
+
+returns_ts <- monthly_returns |>
+  filter(month %in% unique(panel$evaluation_month)) |>
+  transmute(date = month, ticker, test_returns = monthly_return)
+
+MultiEval <- signal_evaluation_multipleholdout(
+  signal_position_ts = signal_position_ts,
+  returns_ts         = returns_ts,
+  Meta               = Meta,
+  return_threshold   = return_threshold,
+  verbose            = FALSE
+)
+```
+
+Task: Display the period-by-period results.
+
+```{r}
+#| label: multi-eval-bydate
+MultiEval$by_date
+```
+
+Q: Interpret the evolution of the portfolio.
+
+A:
+
+Task: Display the time-series summary (mean and SD of IC, hit rate, and coverage).
+
+```{r}
+#| label: multi-eval-summary
+MultiEval$ts_summary
+```
+
+Task: Plot the information coefficient across the holdout window.
+
+```{r}
+#| label: multi-eval-ic-plot
+MultiEval$by_date |>
+  ggplot(aes(date, ic_all)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_x_date(breaks = scales::breaks_width("1 month"), labels = scales::date_format("%b %Y")) +
+  labs(title = "Walk-forward information coefficient (all)",
+       x = "Evaluation month", y = "IC")
+```
+
+### Evaluate relative to benchmark
+
+Task: Convert the holdout returns to excess-of-IVV returns and re-run the walk-forward evaluation.
+
+```{r}
+#| label: multi-eval-benchmark
+index_returns_ts <- monthly |>
+  filter(asset_role == "benchmark") |>
+  compute_monthly_returns() |>
+  filter(month %in% unique(panel$evaluation_month)) |>
+  transmute(date = month, index_return = monthly_return)
+
+returns_ts_benchmark <- returns_ts |>
+  left_join(index_returns_ts, by = "date") |>
+  mutate(test_returns = test_returns - index_return) |>
+  select(date, ticker, test_returns)
+
+MultiEvalBenchmark <- ?(
+  signal_position_ts = signal_position_ts,
+  returns_ts         = returns_ts_benchmark,
+  Meta               = Meta,
+  return_threshold   = 0,
+  verbose            = FALSE
+)
+
+MultiEvalBenchmark$ts_summary
+```
+
+Q: What can, and cannot, three holdout months tell us about this signal?
+
+A:
