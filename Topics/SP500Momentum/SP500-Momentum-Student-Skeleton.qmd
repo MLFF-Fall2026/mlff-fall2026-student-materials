@@ -82,8 +82,11 @@ Other recurring symbols:
 
 Task: Load packages, source the supporting functions in `R/`, and define shared helpers (colors, `pct()`, `gt_compact()`, `attr_tab()`, etc..).
 
+
 ```{r}
 #| label: setup
+#| code-fold: true
+#| code-summary: "Code"
 
 suppressPackageStartupMessages(library(here))
 
@@ -96,7 +99,7 @@ source(here("Supporting", "ProjectSetup.R"))
 count  <- dplyr::count
 filter <- dplyr::filter
 
-base <- here("Topics", "MomentumStrategy2")
+base <- here("Topics", "SP500Momentum")
 for (f in c("portfolio_engine.R", "performance_metrics.R", "attribution.R", "validation.R")) {
   source(file.path(base, "R", f))
 }
@@ -152,10 +155,14 @@ attr_tab <- function(period, label) {
 
 ## Settings
 
-Task: Establish settings for the long and short budgets, benchmark ticker, and other items
+::: {.callout-caution collapse="false" title="Task"}
+Establish settings for the long and short budgets, benchmark ticker, and other items
+:::
 
 ```{r}
 #| label: settings
+#| code-fold: true
+#| code-summary: "Code"
 
 
 settings <- list(
