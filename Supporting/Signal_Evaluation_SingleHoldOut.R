@@ -222,20 +222,15 @@ signal_evaluation_singleholdout <- function(test_returns,
     )
   }
   
-  # ---- REPLACE existing eval_confusionmatrix with this robust version ----
+  # Build a one-versus-rest confusion matrix for the requested class.
+  # For example, for Long vs Not-Long:
+  #   actual positive = return above the positive threshold (success == 1)
+  #   actual negative = every other outcome (success != 1)
   eval_confusionmatrix <- function(df, pos_outcome_value, prediction_signal_value) {
     predicted_pos <- df$signal_position == prediction_signal_value
-    
-    if (pos_outcome_value ==  1L) {
-      actual_pos <- df$success ==  1L
-      actual_neg <- df$success == -1L
-    } else if (pos_outcome_value == -1L) {
-      actual_pos <- df$success == -1L
-      actual_neg <- df$success ==  1L
-    } else {
-      actual_pos <- df$success ==  0L
-      actual_neg <- df$success !=  0L
-    }
+
+    actual_pos <- df$success == pos_outcome_value
+    actual_neg <- !actual_pos
     
     tp <- sum(predicted_pos & actual_pos, na.rm = TRUE)
     fp <- sum(predicted_pos & actual_neg, na.rm = TRUE)
@@ -455,7 +450,7 @@ signal_evaluation_singleholdout <- function(test_returns,
           "FP",
           "FN",
           "TN",
-          #"n",
+          "n",
           "accuracy",
           "precision",
           "recall",

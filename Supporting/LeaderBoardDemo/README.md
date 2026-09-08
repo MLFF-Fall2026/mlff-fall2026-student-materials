@@ -90,7 +90,7 @@ flowchart TD
 ## Running it
 
 ```bash
-quarto render Supporting/LeaderBoardDemo/demo.qmd
+quarto render Supporting/Demo/demo.qmd
 ```
 
 Every render re-fetches Yahoo Finance data and re-fabricates the fake

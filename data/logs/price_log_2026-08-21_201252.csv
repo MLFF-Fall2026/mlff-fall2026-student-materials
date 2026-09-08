@@ -1,0 +1,33 @@
+market_snapshot_id,stage,batch_id,symbol_yahoo,status,message
+M_2026-08-21_201252,historical_price,P0001,,warning,"There was 1 warning in `dplyr::mutate()`.
+ℹ In argument: `data.. = purrr::map(...)`.
+Caused by warning:
+! x = '2602335D', get = 'stock.prices': Error in getSymbols.yahoo(Symbols = ""2602335D"", env = <environment>, verbose = FALSE, : Unable to import “2602335D”.
+cannot open the connection
+ Removing 2602335D."
+M_2026-08-21_201252,historical_price,P0001,2602335D,no_data,No valid close-and-volume observation was returned.
+M_2026-08-21_201252,historical_price,P0039,,warning,"There were 4 warnings in `dplyr::mutate()`.
+The first warning was:
+ℹ In argument: `data.. = purrr::map(...)`.
+Caused by warning:
+! x = 'FOIL', get = 'stock.prices': Error in getSymbols.yahoo(Symbols = ""FOIL"", env = <environment>, verbose = FALSE, : Unable to import “FOIL”.
+cannot open the connection
+ Removing FOIL.
+ℹ Run ]8;;x-r-run:dplyr::last_dplyr_warnings()dplyr::last_dplyr_warnings()]8;; to see the 3 remaining warnings."
+M_2026-08-21_201252,historical_price,P0039,FOIL,no_data,No valid close-and-volume observation was returned.
+M_2026-08-21_201252,historical_price,P0039,FOR,no_data,No valid close-and-volume observation was returned.
+M_2026-08-21_201252,historical_price,P0039,FORM,no_data,No valid close-and-volume observation was returned.
+M_2026-08-21_201252,historical_price,P0039,FORR,no_data,No valid close-and-volume observation was returned.
+M_2026-08-21_201252,historical_price,P0077,,warning,"There were 5 warnings in `dplyr::mutate()`.
+The first warning was:
+ℹ In argument: `data.. = purrr::map(...)`.
+Caused by warning:
+! x = 'PEG', get = 'stock.prices': Error in getSymbols.yahoo(Symbols = ""PEG"", env = <environment>, verbose = FALSE, : Unable to import “PEG”.
+cannot open the connection
+ Removing PEG.
+ℹ Run ]8;;x-r-run:dplyr::last_dplyr_warnings()dplyr::last_dplyr_warnings()]8;; to see the 4 remaining warnings."
+M_2026-08-21_201252,historical_price,P0077,PEG,no_data,No valid close-and-volume observation was returned.
+M_2026-08-21_201252,historical_price,P0077,PEGA,no_data,No valid close-and-volume observation was returned.
+M_2026-08-21_201252,historical_price,P0077,PEN,no_data,No valid close-and-volume observation was returned.
+M_2026-08-21_201252,historical_price,P0077,PENG,no_data,No valid close-and-volume observation was returned.
+M_2026-08-21_201252,historical_price,P0077,PENN,no_data,No valid close-and-volume observation was returned.

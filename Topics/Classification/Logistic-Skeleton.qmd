@@ -1,0 +1,1342 @@
+---
+title: "Logistic Regression"
+author: Mike Aguilar
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute:
+  warning: false
+  echo: true
+  enabled: false
+---
+
+# Housekeeping
+
+```{r}
+#| warning: false
+
+cat("\014")  # clear the console when run interactively
+rm(list = ls())  # begin from a clean workspace
+
+if (!requireNamespace("here", quietly = TRUE)) {
+  stop("Install the 'here' package before rendering this document.")
+}
+
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "ProjectSetup.R"))
+```
+
+# Background
+
+- Suppose you manage an actively selected equity portfolio.
+- You want to identify companies at elevated risk of experiencing a bad earnings quarter.
+- You use currently available financial ratios and sector information to estimate that probability.
+- The predicted probability serves as a portfolio risk signal. Companies with sufficiently high predicted probabilities may receive additional research, be underweighted, or be excluded from the portfolio.
+- We will estimate a simple logistic regression and then a model containing all available predictors.
+- We will reserve a test sample for final evaluation. All data-dependent choices, including standardization and the definition of the target, will be based on the training sample.
+- We assume that all predictors are available to the investor before the earnings quarter being predicted.
+
+# Data
+
+## Acquisition
+
+Task: Load the data dictionary from the `Data_Dictionary` sheet of `earnings_ratio_data.xlsx`.
+
+```{r}
+data_dictionary <- readxl::read_excel(
+  here("data", "?"),
+  sheet = "?"
+)
+
+data_dictionary
+```
+
+Q: Before loading the data, what signs and relative predictive strength do you expect from the variables?
+
+A: ?
+
+Task: Load the data and inspect its structure.
+
+```{r}
+earnings_data <- readxl::read_excel(
+  here("data", "?"),
+  sheet = "?"
+)
+
+dplyr::glimpse(earnings_data)
+```
+
+## Clean
+
+Task: Determine the dimensions of the dataset.
+
+```{r}
+?(earnings_data)
+```
+
+Task: Confirm the number of rows and unique companies.
+
+```{r}
+earnings_data %>%
+  summarise(
+    rows = n(),
+    unique_companies = n_distinct(?),
+    duplicated_company_ids = ?
+  )
+```
+
+Task: Count the total number of missing cells.
+
+```{r}
+sum(?(earnings_data))
+```
+
+Task: Count the number of companies with and without at least one missing value.
+
+```{r}
+earnings_data %>%
+  ?(
+    companies_with_missing = sum(if_any(everything(), is.na)),
+    companies_without_missing = sum(!if_any(everything(), is.na))
+  )
+```
+
+Task: Retain a copy of the original data and drop companies with any missing values.
+
+```{r}
+earnings_data_raw <- earnings_data
+
+earnings_data <- earnings_data %>%
+  ?(!if_any(everything(), is.na))
+```
+
+Complete-case deletion is convenient for this exercise. In an applied project, we would first investigate why the values are missing and consider whether deletion could create bias.
+
+Task: Determine the dimensions of the remaining dataset.
+
+```{r}
+?(earnings_data)
+```
+
+## Split the Sample
+
+Q: Why might we not want to use the entire dataset to train our model?
+
+A: ?
+
+Task: Randomly assign 80% of the companies to the training sample and 20% to the test sample.
+
+```{r}
+set.seed(123)
+
+train_companies <- earnings_data %>%
+  distinct(Company_ID) %>%
+  slice_sample(prop = ?) %>%
+  pull(Company_ID)
+
+train_data_raw <- earnings_data %>%
+  filter(Company_ID %in% ?)
+
+test_data_raw <- earnings_data %>%
+  filter(!Company_ID %in% ?)
+
+sample_sizes <- tibble(
+  Sample = c("Training", "Test"),
+  Rows = c(nrow(train_data_raw), nrow(test_data_raw)),
+  Companies = c(
+    n_distinct(train_data_raw$Company_ID),
+    n_distinct(test_data_raw$Company_ID)
+  )
+)
+
+knitr::kable(sample_sizes)
+```
+
+## Define “Bad” Earnings
+
+Q: How might we define a bad earnings quarter?
+
+A: ?
+
+Task: Plot the training-sample distribution of quarterly earnings growth.
+
+```{r}
+ggplot(?, aes(x = ?)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  labs(
+    title = "Training-Sample Distribution of Quarterly Earnings Growth",
+    x = "Quarterly Earnings Growth",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+Task: Generate a detailed statistical summary of quarterly earnings growth in the training sample.
+
+```{r}
+earnings_summary <- train_data_raw %>%
+  summarise(
+    n = n(),
+    min = min(Quarterly_Earnings_Growth),
+    q10 = quantile(Quarterly_Earnings_Growth, 0.10),
+    q25 = quantile(Quarterly_Earnings_Growth, 0.25),
+    median = ?(Quarterly_Earnings_Growth),
+    mean = mean(Quarterly_Earnings_Growth),
+    stdev = sd(Quarterly_Earnings_Growth),
+    q75 = quantile(Quarterly_Earnings_Growth, 0.75),
+    q90 = quantile(Quarterly_Earnings_Growth, 0.90),
+    max = max(Quarterly_Earnings_Growth)
+  )
+
+knitr::kable(earnings_summary, digits = 3)
+```
+
+Task: Let's use the 15%-quantile as the cut off for bad earnings. Create a `params` list containing the target quantile and a corresponding earnings-growth cutoff.
+
+```{r}
+params <- list(
+  bad_quantile = ?,
+  bad_threshold = as.numeric(
+    quantile(
+      train_data_raw$Quarterly_Earnings_Growth,
+      probs = ?
+    )
+  )
+)
+
+params
+```
+
+Q: What does `bad_threshold` mean?
+
+A: ?
+
+Task: Create the observed target variable in both samples. Set it equal to 1 for a bad earnings quarter and 0 otherwise. Then tabulate the fraction of observations that are "Bad" in each sample.
+
+```{r}
+train_data_raw <- train_data_raw %>%
+  mutate(
+    Bad_Earnings = as.integer(
+      Quarterly_Earnings_Growth <= ?
+    )
+  )
+
+test_data_raw <- ? %>%
+  mutate(
+    Bad_Earnings = as.integer(
+      Quarterly_Earnings_Growth <= ?
+    )
+  )
+
+tibble(
+  Sample = c("Training", "Test"),
+  Bad_Earnings_Rate = c(
+    mean(train_data_raw$Bad_Earnings),
+    mean(test_data_raw$Bad_Earnings)
+  )
+) %>%
+  knitr::kable(digits = 3)
+```
+
+Task: Add a classification-probability threshold of 65% to `params`.
+
+```{r}
+params$prob_threshold <- ?
+params
+```
+
+Q: What is the conceptual difference between `bad_threshold` and `prob_threshold`?
+
+A: ?
+
+Q: What are other approaches to selecting the classification-probability threshold?
+
+A: C?
+
+## Select and Standardize the Predictors
+
+Task: Create objects containing the names of all predictors, numeric predictors, and categorical predictors.
+
+```{r}
+excluded_names <- c(
+  "Company_ID",
+  "Quarterly_Earnings_Growth",
+  "Bad_Earnings"
+)
+
+feature_names <- setdiff(
+  names(train_data_raw),
+  excluded_names
+)
+
+numeric_feature_names <- train_data_raw %>%
+  select(all_of(feature_names)) %>%
+  select(where(is.numeric)) %>%
+  names()
+
+categorical_feature_names <- ?(
+  feature_names,
+  numeric_feature_names
+)
+
+feature_names
+numeric_feature_names
+categorical_feature_names
+```
+
+Task: Compute each numeric predictor's mean and standard deviation using only the training sample.
+
+```{r}
+feature_means <- train_data_raw %>%
+  ?(across(all_of(numeric_feature_names), mean)) %>%
+  unlist(use.names = TRUE)
+
+feature_sds <- train_data_raw %>%
+  summarise(across(all_of(numeric_feature_names), ?)) %>%
+  unlist(use.names = TRUE)
+
+zero_variance_features <- names(feature_sds[feature_sds == 0])
+
+if (length(zero_variance_features) > 0) {
+  stop(
+    "These predictors have zero variance: ",
+    paste(zero_variance_features, collapse = ", ")
+  )
+}
+```
+
+Task: Standardize the numeric predictors in both samples using the training-sample means and standard deviations.
+
+```{r}
+standardize_predictors <- function(data) {
+  data %>%
+    mutate(
+      across(
+        all_of(numeric_feature_names),
+        ~ (.x - feature_means[[cur_column()]]) /
+          ?[[cur_column()]]
+      )
+    )
+}
+
+train_data <- standardize_predictors(train_data_raw)
+test_data <- standardize_predictors(test_data_raw)
+```
+
+Q: Why don't we standardize Quarterly_Earnings_Growth?
+
+A: ?
+
+# Exploratory Data Analysis
+
+The EDA below uses only the training sample. The test sample remains reserved for out-of-sample evaluation.
+
+## Target Variable
+
+Task: Create a bar chart showing the number of good and bad earnings quarters.
+
+```{r}
+train_data %>%
+  dplyr::count(Bad_Earnings) %>%
+  mutate(
+    Earnings_Class = if_else(
+      Bad_Earnings == ?,
+      "Bad Earnings",
+      "Good Earnings"
+    )
+  ) %>%
+  ggplot(aes(x = Earnings_Class, y = n, fill = Earnings_Class)) +
+  geom_col(show.legend = FALSE) +
+  labs(
+    title = "Training-Sample Earnings Classes",
+    x = NULL,
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+Task: Construct a table containing counts and percentages for good and bad earnings quarters.
+
+```{r}
+earnings_proportions <- train_data %>%
+  dplyr::count(Bad_Earnings) %>%
+  mutate(
+    Earnings_Class = if_else(
+      Bad_Earnings == 1,
+      "Bad Earnings",
+      "Good Earnings"
+    ),
+    Percent = ?
+  ) %>%
+  select(Earnings_Class, Count = n, Percent)
+
+knitr::kable(
+  earnings_proportions,
+  digits = 3,
+  col.names = c("Earnings Class", "Count", "Percent")
+)
+```
+
+Q: Any concerns?
+
+A: ?
+
+Task: Compute and plot the bad earnings rate by sector. Also produce a table with the Sector, Number of Companies, Bad Earnings Count, and Bad Earnings Rate.
+
+```{r}
+sector_bad_rates <- train_data %>%
+  group_by(?) %>%
+  summarise(
+    Companies = n(),
+    Bad_Earnings_Count = ?(Bad_Earnings),
+    Bad_Earnings_Rate = ?(Bad_Earnings),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(Bad_Earnings_Rate))
+
+knitr::kable(sector_bad_rates, digits = 3)
+
+sector_bad_rates %>%
+  ggplot(
+    aes(
+      x = reorder(Sector, Bad_Earnings_Rate),
+      y = Bad_Earnings_Rate
+    )
+  ) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  scale_y_continuous(labels = scales::label_percent(accuracy = 1)) +
+  labs(
+    title = "Bad Earnings Rate by Sector",
+    x = NULL,
+    y = "Bad Earnings Rate"
+  ) +
+  theme_minimal()
+```
+
+Q: How might the class imbalance by sector impact our analysis?
+
+A: ?
+
+## Predictors
+
+Task: Compute and plot the correlations among the numeric predictors.
+
+```{r}
+feature_correlations <- train_data %>%
+  select(all_of(numeric_feature_names)) %>%
+  ?()
+
+corrplot(?)
+```
+
+Q: What might the correlation matrix suggest about our modeling efforts?
+
+A: ?
+
+## Connect a Predictor to the Target
+
+Let's use Gross Profit Margin (GPM) has a primary Predictor. Note: We're not suggesting this is the most important predictor, but I want to reduce the scope for pedagogical ease. We'll expand to more predictors later.
+
+Task: For each sector, compare mean standardized GPM between good and bad earnings quarters. Also compute an exploratory two-sample t-test when each group has at least two observations.
+
+```{r}
+sector_gpm_comparison <- train_data %>%
+  ?(Sector) %>%
+  summarise(
+    Good_Count = sum(Bad_Earnings == 0),
+    Bad_Count = sum(?),
+    Mean_GPM_Good = if (
+      sum(Bad_Earnings == 0) > 0
+    ) {
+      mean(GPM[Bad_Earnings == 0])
+    } else {
+      NA_real_
+    },
+    Mean_GPM_Bad = if (
+      sum(Bad_Earnings == 1) > 0
+    ) {
+      mean(GPM[Bad_Earnings == 1])
+    } else {
+      NA_real_
+    },
+    P_Value = if (
+      sum(Bad_Earnings == 0) >= 2 &&
+      sum(Bad_Earnings == 1) >= 2
+    ) {
+      ?(
+        GPM[Bad_Earnings == 0],
+        GPM[Bad_Earnings == 1]
+      )$p.value
+    } else {
+      NA_real_
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Difference = Mean_GPM_Good - Mean_GPM_Bad
+  ) %>%
+  select(
+    Sector,
+    Good_Count,
+    Bad_Count,
+    Mean_GPM_Good,
+    Mean_GPM_Bad,
+    Difference,
+    P_Value
+  ) %>%
+  arrange(desc(abs(Difference)))
+
+knitr::kable(sector_gpm_comparison, digits = 3)
+```
+
+Q: What's the implication of the Differences and PValues?
+
+A: ?
+
+Q: Why should we be cautious about these p-values?
+
+A: ?
+
+Task: Isolate the sector with the largest absolute difference and create side-by-side boxplots with individual observations.
+
+```{r}
+largest_difference_sector <- sector_gpm_comparison %>%
+  filter(!is.na(Difference)) %>%
+  slice_max(
+    order_by = ?,
+    n = 1,
+    with_ties = FALSE
+  ) %>%
+  pull(Sector)
+
+train_data %>%
+  filter(Sector == ?) %>%
+  mutate(
+    Earnings_Class = if_else(
+      Bad_Earnings == 1,
+      "Bad Earnings",
+      "Good Earnings"
+    )
+  ) %>%
+  ggplot(
+    aes(
+      x = Earnings_Class,
+      y = GPM,
+      fill = Earnings_Class
+    )
+  ) +
+  geom_boxplot(
+    width = 0.55,
+    outlier.shape = NA,
+    show.legend = FALSE
+  ) +
+  geom_jitter(width = 0.08, alpha = 0.50) +
+  labs(
+    title = paste(
+      "Gross Profit Margin by Earnings Class:",
+      largest_difference_sector
+    ),
+    x = NULL,
+    y = "Standardized Gross Profit Margin"
+  ) +
+  theme_minimal()
+```
+
+Q: Any concerns?
+
+A: ?
+
+# Base Model
+
+## Estimate
+
+Task: Estimate a logistic regression on the training sample using gross profit margin as the only predictor.
+
+```{r}
+#| warning: true
+
+base_model <- ?(
+  ? ~ ?,
+  data = ?,
+  family = binomial(link = "?")
+)
+```
+
+## Interpret
+
+Task: Display the model output.
+
+```{r}
+?(base_model)
+```
+
+Q: How interpret the coefficient on GPM?
+
+A: ?
+
+Q: Consider a Consumer Staples company. Suppose its starting probability of bad earnings is equal to the observed bad-earnings rate for Consumer Staples. How would a one-standard-deviation increase in GPM affect this probability?
+
+A: ?
+
+## Predict
+
+Task: Predict the probability of bad earnings for each company in the test sample.
+
+```{r}
+test_data <- test_data %>%
+  mutate(
+    base_probability = ?(
+      base_model,
+      newdata = ?,
+      type = "?"
+    )
+  )
+
+head(
+  test_data %>%
+    select(Company_ID, Bad_Earnings, base_probability)
+)
+```
+
+Task: Predict whether a company will have "bad earnings" for two hypothetical companies: one with GPM at the first quartile of the training sample and one with GPM at the third quartile.
+
+```{r}
+gross_margin_quantiles <- quantile(
+  train_data$GPM,
+  probs = ?
+)
+
+base_profiles <- tibble(
+  Company = c(
+    "First-Quartile Gross Margin",
+    "Third-Quartile Gross Margin"
+  ),
+  GPM = as.numeric(gross_margin_quantiles)
+) %>%
+  mutate(
+    Predicted_Probability = predict(
+      base_model,
+      newdata = .,
+      type = "response"
+    ),
+    Predicted_Class = as.integer(
+      Predicted_Probability >= params$prob_threshold
+    )
+  )
+
+knitr::kable(base_profiles, digits = 3)
+```
+
+## Classify
+
+Task: Convert the test-sample probabilities into predicted classes using the classification threshold defined earlier.
+
+```{r}
+test_data <- test_data %>%
+  mutate(
+    base_prediction = as.integer(
+      ? >= ?
+    )
+  )
+
+head(
+  test_data %>%
+    select(
+      Company_ID,
+      Bad_Earnings,
+      base_probability,
+      base_prediction
+    )
+)
+```
+
+Task: Construct a confusion matrix. Rows are actual classes and columns are predicted classes.
+
+```{r}
+base_confusion <- table(
+  Actual = factor(test_data$Bad_Earnings, levels = c(0, 1)),
+  Predicted = factor(?, levels = c(?, ?))
+)
+
+base_confusion
+```
+
+Q: How do we interpret this confusion matrix?
+
+A: ?
+
+Q: Define the following: accuracy, precision, sensitivity, specificity, false-positive rate, false-negative rate, and F1
+
+A:
+
+?
+
+Q: Can you translate the metrics above within our case study?
+
+A:
+
+?
+
+Q: Why F1 important in our dataset?
+
+A: ?
+
+Task: Define a function that computes the main classification metrics.
+
+```{r}
+classification_metrics <- function(actual, predicted) {
+  confusion <- table(
+    Actual = factor(actual, levels = c(0, 1)),
+    Predicted = factor(predicted, levels = c(0, 1))
+  )
+
+  true_negative <- as.numeric(confusion["0", "0"])
+  false_positive <- as.numeric(confusion["0", "1"])
+  false_negative <- as.numeric(confusion["1", "0"])
+  true_positive <- as.numeric(confusion["1", "1"])
+
+  safe_divide <- function(numerator, denominator) {
+    if (denominator == 0) {
+      NA_real_
+    } else {
+      numerator / denominator
+    }
+  }
+
+  accuracy <- safe_divide(
+    ?,
+    ?
+  )
+  precision <- safe_divide(
+    true_positive,
+    true_positive + false_positive
+  )
+  sensitivity <- safe_divide(
+    true_positive,
+    true_positive + false_negative
+  )
+  specificity <- safe_divide(
+    true_negative,
+    true_negative + false_positive
+  )
+  false_positive_rate <- safe_divide(
+    false_positive,
+    false_positive + true_negative
+  )
+  false_negative_rate <- safe_divide(
+    false_negative,
+    false_negative + true_positive
+  )
+
+  if (is.na(precision) || is.na(sensitivity)) {
+    f1 <- NA_real_
+  } else if (precision + sensitivity == 0) {
+    f1 <- 0
+  } else {
+    f1 <- 2 * precision * sensitivity / (precision + sensitivity)
+  }
+
+  tibble(
+    Metric = c(
+      "Accuracy",
+      "Precision",
+      "Sensitivity (Recall)",
+      "Specificity",
+      "False Positive Rate (Type I)",
+      "False Negative Rate (Type II)",
+      "F1"
+    ),
+    Value = c(
+      accuracy,
+      precision,
+      sensitivity,
+      specificity,
+      false_positive_rate,
+      false_negative_rate,
+      f1
+    )
+  )
+}
+
+get_metric <- function(metrics, metric_name) {
+  metrics %>%
+    filter(Metric == metric_name) %>%
+    pull(Value)
+}
+
+format_rate <- function(value) {
+  if (length(value) == 0 || is.na(value)) {
+    "undefined"
+  } else {
+    scales::percent(value, accuracy = 0.1)
+  }
+}
+```
+
+Task: Compute accuracy, precision, sensitivity, specificity, false-positive rate, false-negative rate, and F1.
+
+```{r}
+base_metrics <- ?(
+  test_data$Bad_Earnings,
+  test_data$base_prediction
+)
+
+knitr::kable(base_metrics, digits = 3)
+
+no_information_rate <- max(
+  mean(test_data$Bad_Earnings == 0),
+  mean(test_data$Bad_Earnings == 1)
+)
+```
+
+Q: How do we interpret these metrics?
+
+A: ?
+
+Q: Is this a good classifier?
+
+A: ?
+
+Task: Construct the ROC curve.
+
+```{r}
+base_roc <- pROC::?(
+  response = test_data$Bad_Earnings,
+  predictor = ?,
+  levels = c(0, 1),
+  direction = "?",
+  quiet = TRUE
+)
+
+pROC::ggroc(base_roc, legacy.axes = TRUE) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed"
+  ) +
+  labs(
+    title = "ROC Curve: Base Model",
+    x = "False Positive Rate",
+    y = "Sensitivity"
+  ) +
+  theme_minimal()
+```
+
+Q: How do we interpret the ROC curve?
+
+A: ?
+
+Task: Compute the area under the ROC curve.
+
+```{r}
+base_auc <- as.numeric(pROC::?(base_roc))
+base_auc
+```
+
+Q: How do we interpret the AUC?
+
+A: ?
+
+# Alternative Model
+
+## Estimate
+
+Task: Estimate a logistic regression using all predictors.
+
+```{r}
+#| warning: true
+
+alt_formula <- reformulate(
+  termlabels = feature_names,
+  response = "Bad_Earnings"
+)
+
+alt_model <- ?(
+  ?,
+  data = train_data,
+  family = binomial(link = "logit")
+)
+```
+
+## Interpret
+
+Task: Display the coefficient on GPM in the alternative model.
+
+```{r}
+summary(?)
+```
+
+Q: What differences do you notice about the GPM coefficient. Why might that be the case?
+
+A: ?
+
+Task: Display all model coefficients, sorted by p-value.
+
+```{r}
+alt_coefficients <- as.data.frame(
+  coef(summary(alt_model))
+) %>%
+  tibble::rownames_to_column("Predictor") %>%
+  as_tibble() %>%
+  rename(
+    Standard_Error = `Std. Error`,
+    z_value = `z value`,
+    p_value = `Pr(>|z|)`
+  ) %>%
+  filter(Predictor != "(Intercept)") %>%
+  mutate(
+    Odds_Ratio = exp(Estimate),
+    Absolute_Estimate = abs(Estimate)
+  ) %>%
+  arrange(p_value)
+
+knitr::kable(
+  alt_coefficients %>%
+    select(
+      Predictor,
+      Estimate,
+      Standard_Error,
+      z_value,
+      p_value,
+      Odds_Ratio
+    ),
+  digits = 3
+)
+
+top_alt_terms <- alt_coefficients %>%
+  filter(!is.na(p_value)) %>%
+  slice_head(n = 3) %>%
+  pull(Predictor)
+```
+
+Q: Which model terms show the strongest conditional associations with bad earnings, and why is that not the same as definitive predictor importance?
+
+A: ?
+
+## Predict
+
+Task: Predict the probability of bad earnings for each company in the test sample.
+
+```{r}
+test_data <- test_data %>%
+  mutate(
+    alt_probability = ?(
+      ?,
+      newdata = ?,
+      type = "response"
+    )
+  )
+
+head(
+  test_data %>%
+    select(Company_ID, Bad_Earnings, alt_probability)
+)
+```
+
+Task: Predict bad earnings for two hypothetical companies: one with GPM at the first quartile and one with GPM at the third quartile. Hold all other numeric predictors at their training-sample means and all categorical predictors at their most common training-sample values.
+
+```{r}
+most_common_value <- function(x) {
+  unique_values <- unique(x)
+  unique_values[
+    which.max(
+      tabulate(match(x, unique_values))
+    )
+  ]
+}
+
+reference_numeric_profile <- train_data %>%
+  summarise(
+    across(all_of(numeric_feature_names), mean)
+  )
+
+reference_categorical_profile <- train_data %>%
+  summarise(
+    across(
+      all_of(categorical_feature_names),
+      most_common_value
+    )
+  )
+
+reference_profile <- bind_cols(
+  reference_numeric_profile,
+  reference_categorical_profile
+)
+
+alt_profiles <- bind_rows(
+  reference_profile,
+  reference_profile
+) %>%
+  mutate(
+    Company = c(
+      "First-Quartile Gross Margin",
+      "Third-Quartile Gross Margin"
+    ),
+    GPM = as.numeric(gross_margin_quantiles)
+  ) %>%
+  mutate(
+    Predicted_Probability = predict(
+      alt_model,
+      newdata = .,
+      type = "response"
+    ),
+    Predicted_Class = as.integer(
+      Predicted_Probability ? params$prob_threshold
+    )
+  ) %>%
+  relocate(Company)
+
+knitr::kable(
+  alt_profiles %>%
+    select(
+      Company,
+      GPM,
+      Predicted_Probability,
+      Predicted_Class
+    ),
+  digits = 3
+)
+```
+
+## Classify
+
+Task: Convert the alternative-model probabilities into predicted classes using the classification threshold defined earlier.
+
+```{r}
+test_data <- test_data %>%
+  mutate(
+    alt_prediction = as.integer(
+      alt_probability ? params$prob_threshold
+    )
+  )
+
+head(
+  test_data %>%
+    select(
+      Company_ID,
+      Bad_Earnings,
+      alt_probability,
+      alt_prediction
+    )
+)
+```
+
+Task: Construct a confusion matrix. Rows are actual classes and columns are predicted classes.
+
+```{r}
+alt_confusion <- table(
+  Actual = ?,
+  Predicted = factor(test_data$alt_prediction, levels = c(0, 1))
+)
+
+alt_confusion
+```
+
+Q: How do we interpret this confusion matrix?
+
+A: ?
+
+Task: Compute the classification metrics.
+
+```{r}
+alt_metrics <- ?(
+  test_data$Bad_Earnings,
+  test_data$alt_prediction
+)
+
+knitr::kable(alt_metrics, digits = 3)
+```
+
+Q: How do we interpret these metrics?
+
+A: ?
+
+Task: Compute the AUC.
+
+```{r}
+
+alt_roc <- pROC::?(
+  response = ?,
+  predictor = test_data$alt_prediction,
+  levels = c(0, 1),
+  direction = "<",
+  quiet = TRUE
+)
+
+alt_auc <- as.numeric(pROC::auc(alt_roc))
+alt_auc
+```
+
+# Compare the Models
+
+Task: Create a table comparing the classification metrics and ROC AUC of the two models.
+
+```{r}
+model_comparison <- base_metrics %>%
+  rename(`Base Model` = Value) %>%
+  left_join(
+    alt_metrics %>%
+      rename(`Alternative Model` = Value),
+    by = "Metric"
+  ) %>%
+  bind_rows(
+    tibble(
+      Metric = "ROC AUC",
+      `Base Model` = base_auc,
+      `Alternative Model` = alt_auc
+    )
+  )
+
+knitr::kable(model_comparison, digits = 3)
+```
+
+Task: Plot the two ROC curves together.
+
+```{r}
+roc_models <- list(
+  `Base Model` = base_roc,
+  `Alternative Model` = alt_roc
+)
+
+pROC::ggroc(roc_models, legacy.axes = TRUE) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed"
+  ) +
+  labs(
+    title = "Test-Sample ROC Curves",
+    x = "False Positive Rate",
+    y = "Sensitivity",
+    color = "Model"
+  ) +
+  theme_minimal()
+```
+
+Q: Which model appears better?
+
+A: ?
+
+# Threshold Analysis
+
+The analyses below use the holdout sample to illustrate how definitions and decision rules affect measured performance. In an applied project, do not use these tables to tune a threshold and then report performance on the same holdout sample as a final result. Select thresholds with a validation sample or cross-validation, and reserve a separate test sample for one final evaluation.
+
+## Classification-Probability Threshold
+
+Task: Create a vector of alternative classification-probability thresholds.
+
+```{r}
+prob_thresholds <- c(0.35, 0.45, 0.55, 0.65, 0.75, 0.85)
+prob_thresholds
+```
+
+Task: Reclassify the alternative model's existing probabilities at each threshold. For each threshold, compute sensitivity, specificity, false-positive rate, and false-negative rate.
+
+```{r}
+prob_threshold_results <- lapply(
+  prob_thresholds,
+  function(threshold) {
+    predicted_class <- as.integer(
+      test_data$alt_probability ? threshold
+    )
+
+    metrics <- classification_metrics(
+      test_data$Bad_Earnings,
+      ?
+    )
+
+    tibble(
+      Probability_Threshold = threshold,
+      Predicted_Bad_Rate = mean(predicted_class),
+      Sensitivity = get_metric(
+        metrics,
+        "Sensitivity (Recall)"
+      ),
+      Specificity = get_metric(
+        metrics,
+        "Specificity"
+      ),
+      False_Positive_Rate = get_metric(
+        metrics,
+        "False Positive Rate (Type I)"
+      ),
+      False_Negative_Rate = get_metric(
+        metrics,
+        "False Negative Rate (Type II)"
+      )
+    )
+  }
+) %>%
+  bind_rows()
+
+knitr::kable(prob_threshold_results, digits = 3)
+```
+
+Task: Plot sensitivity and specificity against the probability threshold.
+
+```{r}
+prob_threshold_results %>%
+  select(
+    Probability_Threshold,
+    Sensitivity,
+    Specificity
+  ) %>%
+  pivot_longer(
+    cols = c(Sensitivity, Specificity),
+    names_to = "Metric",
+    values_to = "Value"
+  ) %>%
+  ggplot(
+    aes(
+      x = Probability_Threshold,
+      y = Value,
+      linetype = Metric
+    )
+  ) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  scale_x_continuous(labels = scales::label_percent(accuracy = 1)) +
+  scale_y_continuous(labels = scales::label_percent(accuracy = 1)) +
+  labs(
+    title = "Classification Performance by Probability Threshold",
+    x = "Probability Threshold",
+    y = "Rate",
+    linetype = "Metric"
+  ) +
+  theme_minimal()
+```
+
+Q: Why do these metrics change with `prob_threshold`?
+
+A: ?
+
+Q: Why is this trade-off relevant for the lender?
+
+A: ?
+
+## Target-Definition Threshold
+
+The values below are quantiles used to define the observed target. They are not probability thresholds.
+
+Task: Create a vector of alternative lower-tail quantiles for defining bad earnings.
+
+```{r}
+bad_quantiles <- c(0.01, 0.05, 0.10, 0.15, 0.20, 0.25)
+bad_quantiles
+```
+
+Task: For each quantile, compute the percent of the training sample that is bad, the percent for the test sample, the sensitivity and the specificity.
+
+```{r}
+
+#| warning: true
+
+bad_quantile_results <- lapply(
+  bad_quantiles,
+  function(bad_quantile) {
+    
+    # Define bad earnings using the training-sample cutoff
+    earnings_cutoff <- as.numeric(
+      quantile(
+        train_data$Quarterly_Earnings_Growth,
+        probs = ?
+      )
+    )
+
+    # Recreate the target in the training and test samples
+    threshold_train <- train_data %>%
+      mutate(
+        Target_Bad_Earnings = as.integer(
+          Quarterly_Earnings_Growth <= earnings_cutoff
+        )
+      )
+
+    threshold_test <- test_data %>%
+      mutate(
+        Target_Bad_Earnings = as.integer(
+          Quarterly_Earnings_Growth ? earnings_cutoff
+        )
+      )
+
+    # Refit the logistic model
+    threshold_formula <- reformulate(
+      termlabels = feature_names,
+      response = "Target_Bad_Earnings"
+    )
+
+    threshold_model <- glm(
+      threshold_formula,
+      data = threshold_train,
+      family = binomial(link = "logit")
+    )
+
+    # Predict the test sample
+    threshold_probability <- predict(
+      threshold_model,
+      newdata = threshold_test,
+      type = "response"
+    )
+
+    threshold_prediction <- as.integer(
+      threshold_probability >= params$prob_threshold
+    )
+
+    # Compute classification metrics
+    metrics <- classification_metrics(
+      threshold_test$Target_Bad_Earnings,
+      threshold_prediction
+    )
+
+    tibble(
+      Bad_Quantile = bad_quantile,
+      Earnings_Growth_Cutoff = earnings_cutoff,
+      Training_Bad_Rate = mean(
+        threshold_train$Target_Bad_Earnings
+      ),
+      Test_Bad_Rate = mean(
+        threshold_test$Target_Bad_Earnings
+      ),
+      Sensitivity = get_metric(
+        metrics,
+        "Sensitivity (Recall)"
+      ),
+      Specificity = get_metric(
+        metrics,
+        "Specificity"
+      )
+    )
+  }
+) %>%
+  bind_rows()
+
+# Display the results
+bad_quantile_results %>%
+  mutate(
+    across(
+      c(
+        Training_Bad_Rate,
+        Test_Bad_Rate,
+        Sensitivity,
+        Specificity
+      ),
+      ~ scales::percent(.x, accuracy = 0.1)
+    )
+  ) %>%
+  knitr::kable()
+```
+
+Q: Why do the metrics change when the target-definition quantile changes?
+
+A:
+
+?
+
+Q: Why is the target definition relevant for the portfolio manager?
+
+A:
+
+?

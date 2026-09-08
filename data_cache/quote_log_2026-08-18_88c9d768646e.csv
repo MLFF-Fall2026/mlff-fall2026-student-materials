@@ -1,0 +1,2 @@
+stage,batch_id,symbol_yahoo,status,message
+snapshot_quote,Q0001,2602335D,no_data,No requested quote field was returned.

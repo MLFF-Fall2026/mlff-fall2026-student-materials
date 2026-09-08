@@ -1,0 +1,1239 @@
+---
+title: "ARMA for Financial Data Science"
+author: Mike Aguilar
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute:
+  warning: false
+  echo: true
+  enabled: false
+---
+
+# Background
+
+- An equity research analyst covers five publicly traded companies and wants to forecast their quarterly revenue.
+- The practical goal is to produce a statistical baseline forecast of revenue growth and the implied revenue level for the next four quarters.
+- The analyst can compare these forecasts with fundamental forecasts or market expectations to identify assumptions that deserve further investigation.
+- The ARMA forecast is one input into a broader research and valuation process; it does not, by itself, determine whether a stock should be bought or sold.
+
+# Housekeeping
+
+Task: Reset the R session and load the packages and helper code defined in `Supporting/ProjectSetup.R`.
+
+```{r}
+#| warning: false
+
+cat("\014")  # clear the console
+rm(list = ls())  # clear the workspace
+
+if (!requireNamespace("here", quietly = TRUE)) {
+  install.packages("here")
+}
+
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "ProjectSetup.R"))
+```
+
+# Data
+
+## Load
+
+Task: Load the data dictionary from the `Data_Dictionary` sheet of `company_sales.xlsx`.
+
+```{r}
+data_dictionary <- readxl::read_excel(
+  here("data", "?"),
+  sheet = "?"
+)
+
+data_dictionary
+```
+
+Q: Before you load and analyze the actual data, take a look at the data dictionary. What are the features we can use to make these forecasts?
+
+A: ?
+
+Task: Load the company sales data from the `Data` sheet of `company_sales.xlsx`.
+
+```{r}
+sales <- readxl::read_excel(
+  here("data", "company_sales.xlsx"),
+  sheet = "?"
+)
+
+sales
+```
+
+## Clean
+
+Task: Convert `company` to character, `quarter` to a quarterly date, and `sales` to numeric. Then sort the observations by company and quarter.
+
+```{r}
+sales <- sales %>%
+  mutate(
+    company = as.character(company),
+    quarter = zoo::as.yearqtr(quarter, format = "%Y Q%q"),
+    sales = as.numeric(sales)
+  ) %>%
+  ?(company, quarter)
+
+head(sales)
+```
+
+Task: Count the missing values in each variable.
+
+```{r}
+missing_summary <- sales %>%
+  summarise(across(everything(), ~ sum(?(.x)))) %>%
+  ?(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "missing_values"
+  )
+
+missing_summary
+
+if (any(missing_summary$missing_values > 0)) {
+  stop("Resolve the missing values before continuing with the time-series analysis.")
+}
+```
+
+Task: Check for duplicated company-quarter observations.
+
+```{r}
+duplicate_rows <- sales %>%
+  dplyr::?(company, quarter, name = "n") %>%
+  filter(n > 1)
+
+if (nrow(duplicate_rows) == 0) {
+  message("No duplicated company-quarter observations were found.")
+} else {
+  print(
+    kable(
+      duplicate_rows,
+      caption = "Duplicated company-quarter observations"
+    )
+  )
+  stop("Resolve duplicated company-quarter observations before continuing.")
+}
+```
+
+Task: Compute the number and date span of observations for each company.
+
+```{r}
+sales %>%
+  group_by(company) %>%
+  summarise(
+    observations = n(),
+    first_quarter = min(?),
+    last_quarter = max(?),
+    .groups = "drop"
+  )
+```
+
+Task: Verify that each company has one observation in every consecutive quarter. A gap would be compressed when the data are converted to a regular quarterly time series.
+
+```{r}
+quarter_gaps <- sales %>%
+  group_by(?) %>%
+  arrange(quarter, .by_group = TRUE) %>%
+  mutate(
+    previous_quarter = lag(quarter),
+    quarters_since_previous = round(
+      4 * (as.numeric(quarter) - as.numeric(previous_quarter))
+    )
+  ) %>%
+  filter(
+    !is.na(quarters_since_previous),
+    quarters_since_previous != 1
+  ) %>%
+  select(
+    company,
+    previous_quarter,
+    quarter,
+    quarters_since_previous
+  ) %>%
+  ungroup()
+
+if (nrow(quarter_gaps) == 0) {
+  message("Every company has consecutive quarterly observations.")
+} else {
+  print(
+    kable(
+      quarter_gaps,
+      caption = "Nonconsecutive company-quarter observations"
+    )
+  )
+  stop("At least one company has a gap or irregular spacing in its quarterly data.")
+}
+```
+
+## Engineer
+
+Task: Treat `sales` as company revenue. Compute log revenue and quarterly log revenue growth for each company.
+
+```{r}
+sales <- sales %>%
+  group_by(company) %>%
+  arrange(quarter, .by_group = TRUE) %>%
+  mutate(
+    log_sales = ?,
+    dlog_sales = ?
+  ) %>%
+  ungroup()
+
+sales %>%
+  select(company, quarter, sales, dlog_sales) %>%
+  head(10) %>%
+  kable(
+    digits = 4,
+    caption = "Engineered quarterly revenue growth"
+  )
+```
+
+Q: Why do we model quarterly revenue growth rather than revenue levels?
+
+A: ?
+
+Q: How do we provide a revenue forecast if we are modeling growth?
+
+A:
+
+?
+
+## Training and Test Samples
+
+Q: How should we divide the observations into training and test samples, and what time-series mistake must we avoid?
+
+A: ?
+
+Task: Reserve the final 20 quarterly growth observations, or five years, as the test sample for each company. Use all earlier growth observations as the training sample.
+
+```{r}
+model_data <- sales %>%
+  filter(!is.na(dlog_sales)) %>%
+  group_by(company) %>%
+  arrange(quarter, .by_group = TRUE) %>%
+  mutate(
+    row_number_company = row_number(),
+    total_observations = ?,
+    sample = if_else(
+      row_number_company > total_observations - 20,
+      "Test",
+      "Train"
+    )
+  ) %>%
+  ungroup()
+
+if (any(model_data$total_observations <= 20)) {
+  stop("Each company must have more than 20 valid growth observations.")
+}
+
+split_summary <- model_data %>%
+  dplyr::count(company, sample) %>%
+  pivot_wider(
+    names_from = sample,
+    values_from = n,
+    values_fill = 0
+  )
+
+split_summary
+
+model_data <- model_data %>%
+  select(-row_number_company, -total_observations)
+
+train_data <- model_data %>%
+  filter(sample == "?")
+
+test_data <- model_data %>%
+  filter(sample == "?")
+```
+
+# Exploratory Data Analysis
+
+Task: Create a table of training-sample summary statistics for each company's quarterly revenue growth.
+
+```{r}
+growth_summary <- train_data %>%
+  group_by(company) %>%
+  summarise(
+    observations = n(),
+    mean_dlog = ?(dlog_sales),
+    sd_dlog = ?(dlog_sales),
+    minimum_dlog = ?(dlog_sales),
+    median_dlog = ?(dlog_sales),
+    maximum_dlog = ?(dlog_sales),
+    .groups = "drop"
+  )
+
+kable(
+  growth_summary,
+  digits = 5,
+  caption = "Training-sample statistics for quarterly revenue growth"
+)
+```
+
+Task: Plot the training-sample ACF of quarterly log revenue growth for each company. Begin with the default number of lags and adjust it if needed. Use the "acf" function.
+
+```{r}
+companies <- sort(unique(train_data$company))
+
+for (company_id in companies) {
+  company_growth <- train_data %>%
+    filter(company == ?) %>%
+    arrange(quarter) %>%
+    pull(dlog_sales)
+
+  acf(
+    company_growth,
+    main = paste("Company", company_id, ": ACF of Delta log(Revenue)")
+  )
+}
+
+```
+
+Q: What does ACF mean? How interpret positive(negative) ACF value? How interpret large(small) values? How useful as an EDA tool?
+
+A: ?
+
+Q: What do the ACF's suggest in our case?
+
+A: ?
+
+# Company A
+
+Let's focus on Company A. Later we will expand to the other companies.
+
+Task: Create Company A's training and test data frames and convert its training-sample log growth to a quarterly `ts` object.
+
+```{r}
+company_a_train <- ? %>%
+  filter(company == "?") %>%
+  arrange(quarter)
+
+company_a_test <- ? %>%
+  filter(company == "?") %>%
+  arrange(quarter)
+
+a_train_ts <- ts(
+  company_a_train$dlog_sales,
+  frequency = 4
+)
+```
+
+Task: Create a plot of sales and delta log sales
+
+```{r}
+sales_plot <- company_a_train %>%
+  ggplot(aes(x = quarter, y = sales, group = 1)) +
+  geom_line() +
+  labs(
+    title = "Company A Revenue",
+    x = NULL,
+    y = "Revenue"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+growth_plot <- company_a_train %>%
+  ggplot(aes(x = quarter, y = dlog_sales, group = 1)) +
+  geom_line() +
+  labs(
+    title = "Company A Log Revenue Growth",
+    x = NULL,
+    y = "Log Growth"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+sales_plot
+growth_plot
+```
+
+Q: Which seems stationary? What is the implication for modeling?
+
+A:
+
+?
+
+Task: Plot again the ACF for company A's training sample revenue growth. Accompany that plot with the PACF. Use the acf and pacf functions.
+
+```{r}
+  ?(
+    company_a_train$dlog_sales,
+    main = paste("Company-A ACF of Delta log(Revenue)")
+  )
+
+  ?(
+    company_a_train$dlog_sales,
+    main = paste("Company-A PACF of Delta log(Revenue)")
+  )
+
+```
+
+Q: What is the meaning of PACF?
+
+A:
+
+?
+
+Q: Suppose there was a spike in PACF(3). What does that mean? What might explain that behavior within our case?
+
+A: ?
+
+Q: How use the ACF and PACF in combination to design a model for our series?
+
+A: ?
+
+Q: Based on the ACF/PACF, what might be an appropriate ARMA order for company A?
+
+A: T?
+
+## Model Specification
+
+Task: Define a helper function that reports coefficient estimates, standard errors, z-statistics, and approximate two-sided p-values.
+
+```{r}
+coefficient_table <- function(model) {
+  estimates <- coef(model)
+  standard_errors <- sqrt(diag(model$var.coef))
+
+  tibble(
+    term = names(estimates),
+    estimate = as.numeric(estimates),
+    standard_error = as.numeric(standard_errors)
+  ) %>%
+    mutate(
+      z_statistic = estimate / standard_error,
+      p_value = 2 * pnorm(
+        abs(z_statistic),
+        lower.tail = FALSE
+      )
+    )
+}
+```
+
+### AR(1)
+
+Task: Estimate an AR(1) model for Company A's training-sample log revenue growth.
+
+```{r}
+model_ar1 <- ?(
+  a_train_ts,
+  order = ?,
+  include.mean = TRUE,
+  method = "ML"
+)
+
+summary(model_ar1)
+```
+
+Task: Display the AR(1) coefficient estimates and approximate significance tests.
+
+```{r}
+kable(
+  coefficient_table(model_ar1),
+  digits = 4,
+  caption = "Company A AR(1) coefficient estimates"
+)
+```
+
+Q: How should we interpret the AR(1) model's coefficients?
+
+A: ?
+
+### AR(2)
+
+Task: Estimate an AR(2) model for Company A's training-sample log revenue growth.
+
+```{r}
+model_ar2 <- Arima(
+  ?,
+  order = ?,
+  include.mean = TRUE,
+  method = "ML"
+)
+
+summary(model_ar2)
+```
+
+Task: Compare the AR(1) and AR(2) coefficient estimates in one table.
+
+```{r}
+bind_rows(
+  coefficient_table(model_ar1) %>%
+    mutate(model = "AR(1)"),
+  coefficient_table(model_ar2) %>%
+    mutate(model = "AR(2)")
+) %>%
+  select(model, everything()) %>%
+  kable(
+    digits = 4,
+    caption = "Comparison of AR coefficient estimates"
+  )
+```
+
+Q: How do the AR(2) estimates differ from the AR(1) estimates, and what is the implication?
+
+A: ?
+
+### MA(1)
+
+Task: Estimate an MA(1) model for Company A's training-sample log revenue growth.
+
+```{r}
+model_ma1 <- Arima(
+  a_train_ts,
+  order = ?,
+  include.mean = TRUE,
+  method = "ML"
+)
+
+summary(model_ma1)
+```
+
+Task: Display the MA(1) coefficient estimates and approximate significance tests.
+
+```{r}
+kable(
+  coefficient_table(model_ma1),
+  digits = 4,
+  caption = "Company A MA(1) coefficient estimates"
+)
+```
+
+Q: How should we interpret the MA(1) coefficients?
+
+A: ?
+
+### ARMA(1,1)
+
+Task: Estimate an ARMA(1,1) model for Company A's training-sample log revenue growth.
+
+```{r}
+model_arma11 <- Arima(
+  a_train_ts,
+  order = ?,
+  include.mean = TRUE,
+  method = "ML"
+)
+
+summary(model_arma11)
+```
+
+Task: Display the ARMA(1,1) coefficient estimates and approximate significance tests.
+
+```{r}
+kable(
+  coefficient_table(model_arma11),
+  digits = 4,
+  caption = "Company A ARMA(1,1) coefficient estimates"
+)
+```
+
+Q: How should we interpret the ARMA(1,1) coefficients?
+
+A: ?
+
+### Model Choice
+
+Task: Compare the candidate models using AIC and summary statistics for their in-sample residuals.
+
+```{r}
+candidate_models <- list(
+  `AR(1)` = model_ar1,
+  `AR(2)` = model_ar2,
+  `MA(1)` = model_ma1,
+  `ARMA(1,1)` = model_arma11
+)
+
+summarize_model <- function(fit, model_name) {
+
+  residual_values <- as.numeric(residuals(fit))
+
+  tibble(
+    model = model_name,
+    AIC = AIC(fit),
+    residual_mean = mean(residual_values, na.rm = TRUE),
+    residual_sd = sd(residual_values, na.rm = TRUE),
+    residual_min = min(residual_values, na.rm = TRUE),
+    residual_median = median(residual_values, na.rm = TRUE),
+    residual_max = max(residual_values, na.rm = TRUE),
+    residual_MSE = mean(residual_values^2, na.rm = TRUE)
+  )
+}
+
+model_comparison <- purrr::imap_dfr(
+  candidate_models,
+  ~ summarize_model(fit = .x, model_name = .y)
+) %>%
+  arrange(AIC)
+
+kable(
+  model_comparison,
+  digits = 6,
+  caption = "Company A candidate-model comparison"
+)
+```
+
+Q: Which statistics should guide the preliminary model choice?
+
+A: ?
+
+Task: Use `auto.arima()` to search over stationary, nonseasonal specifications and select the model with the lowest AIC among the models searched.
+
+```{r}
+model_auto_a <- ?(
+  a_train_ts,
+  d = 0,
+  seasonal = FALSE,
+  stationary = TRUE,
+  allowmean = TRUE,
+  allowdrift = FALSE,
+  ic = "aic",
+  stepwise = FALSE,
+  approximation = FALSE
+)
+
+summary(model_auto_a)
+
+selected_order_a <- arimaorder(model_auto_a)
+selected_order_a
+```
+
+Q: Does `auto.arima()` establish that the selected model is the true or universally best model?
+
+A: ?
+
+Q: What limitation follows from restricting the search to nonseasonal models?
+
+A: ?
+
+## Model Diagnostics
+
+We now diagnose the model selected by `auto.arima()`.
+
+Task: Plot Company A's observed and fitted training-sample log revenue growth.
+
+```{r}
+fitted_data_a <- company_a_train %>%
+  transmute(
+    quarter,
+    observed = dlog_sales,
+    fitted = as.numeric(fitted(model_auto_a))
+  ) %>%
+  pivot_longer(
+    cols = c(observed, fitted),
+    names_to = "series",
+    values_to = "dlog_sales"
+  )
+
+ggplot(
+  fitted_data_a,
+  aes(x = quarter, y = dlog_sales, linetype = series)
+) +
+  geom_line(linewidth = 0.8) +
+  labs(
+    title = "Company A: Observed and Fitted Quarterly Revenue Growth",
+    x = NULL,
+    y = expression(Delta * log(Revenue)),
+    linetype = NULL
+  )
+```
+
+Q: How do fitted values differ from test-sample forecasts?
+
+A: ?
+
+Task: Plot the residuals from the selected Company A model over time.
+
+```{r}
+residual_data_a <- company_a_train %>%
+  transmute(
+    quarter,
+    residual = as.numeric(residuals(?))
+  )
+
+ggplot(residual_data_a, aes(x = quarter, y = residual)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_line(linewidth = 0.8) +
+  labs(
+    title = "Company A: Residuals from the AIC-Selected ARMA Model",
+    x = NULL,
+    y = "Residual"
+  )
+```
+
+Task: Plot the ACF and PACF of the selected model's residuals.
+
+```{r}
+old_par <- par(no.readonly = TRUE)
+par(mfrow = c(1, 2))
+
+acf(
+  residuals(?),
+  main = "Residual ACF"
+)
+
+pacf(
+  residuals(?),
+  main = "Residual PACF"
+)
+
+par(old_par)
+```
+
+Q: What should well-behaved ARMA residuals look like? Any concerns?
+
+A:
+
+?
+
+Task: Use a Ljung-Box test at eight lags to test the residuals jointly for remaining autocorrelation. Adjust the test degrees of freedom for the estimated AR and MA terms.
+
+```{r}
+model_order_a <- ?(model_auto_a)
+
+ljung_box_a <- ?(
+  as.numeric(residuals(model_auto_a)),
+  lag = 8,
+  type = "Ljung-Box",
+  fitdf = unname(model_order_a["p"] + model_order_a["q"])
+)
+
+ljung_box_a
+```
+
+Q: How should we interpret the Ljung-Box p-value?
+
+A:
+
+?
+
+## Forecasting into the Test Sample
+
+Q: Describe how $\hat{y}_{T+1}$ can be constructed from an AR(1) trained from $t=0$ through $t=T$.
+
+A:
+
+?
+
+Q: What might be a weakness of this recursive approach?
+
+A: ?
+
+The following exercise keeps the forecast origin at the final training quarter and forecasts all 20 quarters in the test sample. It therefore evaluates horizons from one through 20 quarters ahead. This fixed-origin design is useful for studying how forecast performance changes with the horizon. In practice, an equity analyst would normally update the model as each new quarter becomes available, which a rolling-origin evaluation would better represent.
+
+Task: Generate fixed-origin forecasts for all Company A test-sample quarters, including 80% and 95% prediction intervals.
+
+```{r}
+test_forecast_a <- ?(
+  ?,
+  h = ?,
+  level = c(80, 95)
+)
+
+test_forecast_table_a <- company_a_test %>%
+  transmute(
+    quarter,
+    actual = dlog_sales,
+    forecast = as.numeric(test_forecast_a$mean),
+    lower_80 = as.numeric(test_forecast_a$lower[, "80%"]),
+    upper_80 = as.numeric(test_forecast_a$upper[, "80%"]),
+    lower_95 = as.numeric(test_forecast_a$lower[, "95%"]),
+    upper_95 = as.numeric(test_forecast_a$upper[, "95%"]),
+    forecast_error = actual - forecast
+  )
+
+kable(
+  test_forecast_table_a,
+  digits = 6,
+  caption = "Company A fixed-origin forecasts across the test sample"
+)
+```
+
+Task: Plot Company A's actual test-sample growth and fixed-origin forecasts with 80% and 95% prediction intervals.
+
+```{r}
+ggplot(test_forecast_table_a, aes(x = quarter)) +
+  geom_ribbon(
+    aes(ymin = lower_95, ymax = upper_95),
+    alpha = 0.15
+  ) +
+  geom_ribbon(
+    aes(ymin = lower_80, ymax = upper_80),
+    alpha = 0.25
+  ) +
+  geom_line(
+    aes(y = actual, linetype = "Actual"),
+    linewidth = 0.8
+  ) +
+  geom_line(
+    aes(y = forecast, linetype = "Forecast"),
+    linewidth = 0.8
+  ) +
+  labs(
+    title = "Company A: Fixed-Origin Test-Sample Forecasts",
+    subtitle = "Shaded regions show 80% and 95% prediction intervals",
+    x = NULL,
+    y = expression(Delta * log(Revenue)),
+    linetype = NULL
+  )
+```
+
+Q: Why does the forecast gradually flatten over the test period?
+
+A:
+
+? Q: Why do the prediction intervals become wider as the forecast horizon increases?
+
+A:
+
+? Q: What should we conclude from the unusually low actual growth rate around 2025-Q1?
+
+A:
+
+? Task: Compute Company A's mean squared forecast error and root mean squared forecast error over the test sample.
+
+```{r}
+company_a_msfe <- mean(
+  test_forecast_table_a$f?,
+  na.rm = TRUE
+)
+
+company_a_rmsfe <- ?(company_a_msfe)
+
+company_a_forecast_accuracy <- tibble(
+  metric = c("MSFE", "RMSFE"),
+  value = c(company_a_msfe, company_a_rmsfe)
+)
+
+kable(
+  company_a_forecast_accuracy,
+  digits = 8,
+  caption = "Company A test-sample forecast accuracy"
+)
+```
+
+Q: How do MSFE and RMSFE differ? How can we use this for model evaluation?
+
+A:
+
+? \## Forecasting out of sample
+
+Task: Re-estimate the selected Company A ARMA specification using all available observations, and then forecast the next four quarters.
+
+```{r}
+company_a_full <- model_data %>%
+  filter(company == "?") %>%
+  arrange(quarter)
+
+a_full_ts <- ts(
+  company_a_full$?,
+  frequency = 4
+)
+
+selected_nonseasonal_order_a <- as.integer(
+  selected_order_a[c("p", "d", "q")]
+)
+
+include_mean_a <- "intercept" %in% names(coef(model_auto_a))
+
+# Specify the selected order explicitly so that the coefficients are
+# re-estimated with all available Company A observations.
+model_auto_a_full <- Arima(
+  a_full_ts,
+  order = selected_nonseasonal_order_a,
+  include.mean = include_mean_a,
+  method = "ML"
+)
+
+future_forecast_a <- forecast(
+  model_auto_a_full,
+  h = 4,
+  level = c(80, 95)
+)
+
+last_quarter_a <- max(company_a_full$quarter)
+future_quarters_a <- last_quarter_a + seq_len(4) / 4
+
+future_growth_a <- tibble(
+  quarter = future_quarters_a,
+  forecast_dlog = as.numeric(future_forecast_a$mean),
+  lower_80 = as.numeric(future_forecast_a$lower[, "80%"]),
+  upper_80 = as.numeric(future_forecast_a$upper[, "80%"]),
+  lower_95 = as.numeric(future_forecast_a$lower[, "95%"]),
+  upper_95 = as.numeric(future_forecast_a$upper[, "95%"])
+)
+
+kable(
+  future_growth_a,
+  digits = 6,
+  caption = "Company A four-quarter out-of-sample growth forecast"
+)
+```
+
+Task: Plot Company A's historical log revenue growth and the four-quarter growth forecast.
+
+```{r}
+actual_growth_plot_a <- company_a_full %>%
+  transmute(
+    quarter,
+    dlog_sales,
+    series = "Actual"
+  )
+
+forecast_growth_plot_a <- bind_rows(
+  company_a_full %>%
+    slice_tail(n = 1) %>%
+    transmute(
+      quarter,
+      dlog_sales,
+      series = "Forecast"
+    ),
+  future_growth_a %>%
+    transmute(
+      quarter,
+      dlog_sales = forecast_dlog,
+      series = "Forecast"
+    )
+)
+
+ggplot() +
+  geom_ribbon(
+    data = future_growth_a,
+    aes(x = quarter, ymin = lower_95, ymax = upper_95),
+    alpha = 0.15
+  ) +
+  geom_ribbon(
+    data = future_growth_a,
+    aes(x = quarter, ymin = lower_80, ymax = upper_80),
+    alpha = 0.25
+  ) +
+  geom_line(
+    data = bind_rows(
+      actual_growth_plot_a,
+      forecast_growth_plot_a
+    ),
+    aes(x = quarter, y = dlog_sales, linetype = series),
+    linewidth = 0.8
+  ) +
+  labs(
+    title = "Company A: Four-Quarter Growth Forecast",
+    x = NULL,
+    y = expression(Delta * log(Revenue)),
+    linetype = NULL
+  )
+```
+
+Task: Convert the four quarterly log-growth forecasts into discrete percentage growth and an implied revenue path.
+
+```{r}
+last_sales_a <- sales %>%
+  filter(company == "A") %>%
+  arrange(quarter) %>%
+  slice_tail(n = 1) %>%
+  pull(sales)
+
+future_sales_a <- future_growth_a %>%
+  mutate(
+    forecast_discrete_growth = ?,
+    forecast_pct_growth = ?,
+    forecast_sales = ?
+  )
+
+kable(
+  future_sales_a %>%
+    select(
+      quarter,
+      forecast_dlog,
+      forecast_pct_growth,
+      forecast_sales
+    ),
+  digits = 4,
+  caption = "Company A growth forecasts converted to revenue levels"
+)
+```
+
+Q: Why do we cumulatively sum the future log-growth forecasts before converting them to revenue?
+
+A: ?
+
+Task: Plot Company A's actual revenue and the implied four-quarter revenue forecast.
+
+```{r}
+actual_sales_a <- sales %>%
+  ?(company == "A") %>%
+  transmute(
+    quarter,
+    sales,
+    series = "Actual"
+  )
+
+forecast_sales_plot_a <- bind_rows(
+  actual_sales_a %>%
+    slice_tail(n = 1) %>%
+    mutate(series = "Forecast"),
+  future_sales_a %>%
+    transmute(
+      quarter,
+      sales = forecast_sales,
+      series = "Forecast"
+    )
+)
+
+ggplot(
+  bind_rows(actual_sales_a, forecast_sales_plot_a),
+  aes(x = quarter, y = sales, linetype = series)
+) +
+  geom_line(linewidth = 0.9) +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  labs(
+    title = "Company A: Actual and Forecasted Revenue",
+    x = NULL,
+    y = "Revenue",
+    linetype = NULL
+  )
+```
+
+# Other Companies
+
+Task: Use `auto.arima()` to select a stationary, nonseasonal, minimum-AIC specification for each company's training sample.
+
+```{r}
+fit_auto_arma <- function(data) {
+  y <- ts(
+    data$dlog_sales,
+    frequency = 4
+  )
+
+  ?(
+    y,
+    d = 0,
+    seasonal = FALSE,
+    stationary = TRUE,
+    allowmean = TRUE,
+    allowdrift = FALSE,
+    ic = "aic",
+    stepwise = FALSE,
+    approximation = FALSE
+  )
+}
+
+company_ids <- train_data %>%
+  distinct(company) %>%
+  arrange(company) %>%
+  pull(company)
+
+company_models <- company_ids %>%
+  set_names() %>%
+  purrr::map(function(company_id) {
+    train_data %>%
+      filter(company == company_id) %>%
+      arrange(quarter) %>%
+      fit_auto_arma()
+  })
+
+selected_orders <- purrr::imap_dfr(
+  company_models,
+  function(model, company_id) {
+    order <- arimaorder(model)
+
+    tibble(
+      company = company_id,
+      p = unname(order["p"]),
+      d = unname(order["d"]),
+      q = unname(order["q"]),
+      AIC = AIC(model)
+    )
+  }
+)
+
+kable(
+  selected_orders,
+  digits = 4,
+  caption = "AIC-selected nonseasonal ARMA orders"
+)
+```
+
+Task: Display the fitted AIC-selected model summary for each company.
+
+```{r}
+purrr::iwalk(
+  company_models,
+  function(model, company_id) {
+    cat("\n\nCompany", company_id, "\n")
+    print(summary(model))
+  }
+)
+```
+
+Task: Generate forecasts for every company's complete test period.
+
+```{r}
+forecast_company_test <- function(company_id, model) {
+  company_test <- test_data %>%
+    filter(company == company_id) %>%
+    arrange(quarter)
+
+  company_forecast <- ?(
+    ?,
+    h = nrow(company_test),
+    level = c(80, 95)
+  )
+
+  company_test %>%
+    transmute(
+      company,
+      quarter,
+      actual = dlog_sales,
+      selected_arma_forecast = as.numeric(company_forecast$mean),
+      lower_80 = as.numeric(company_forecast$lower[, "80%"]),
+      upper_80 = as.numeric(company_forecast$upper[, "80%"]),
+      lower_95 = as.numeric(company_forecast$lower[, "95%"]),
+      upper_95 = as.numeric(company_forecast$upper[, "95%"])
+    )
+}
+
+all_company_forecasts <- purrr::imap_dfr(
+  company_models,
+  ~ forecast_company_test(company_id = .y, model = .x)
+)
+
+kable(
+  all_company_forecasts,
+  digits = 6,
+  caption = "AIC-selected ARMA forecasts for each company's test sample"
+)
+```
+
+Task: Compute and summarize the out-of-sample forecast errors for each company's selected ARMA model.
+
+```{r}
+all_company_forecasts <- all_company_forecasts %>%
+  mutate(
+    selected_arma_error = ?
+  )
+
+arma_error_summary <- all_company_forecasts %>%
+  group_by(company) %>%
+  summarise(
+    mean_error = mean(selected_arma_error),
+    error_sd = sd(selected_arma_error),
+    MSFE = mean(selected_arma_error^2),
+    RMSFE = sqrt(MSFE),
+    .groups = "drop"
+  )
+
+kable(
+  arma_error_summary,
+  digits = 6,
+  caption = "Selected ARMA test-sample forecast errors"
+)
+```
+
+Q: What do the forecast results suggest?
+
+A:
+
+?
+
+Task: Compute test-sample forecast errors for two simple benchmarks. The naive benchmark uses the final training-sample growth rate for every test quarter, while the mean benchmark uses the training-sample average growth rate.
+
+```{r}
+benchmark_values <- train_data %>%
+  group_by(company) %>%
+  arrange(quarter, .by_group = TRUE) %>%
+  summarise(
+    naive_forecast = ?,
+    mean_forecast = ?
+    .groups = "drop"
+  )
+
+all_company_forecasts <- all_company_forecasts %>%
+  left_join(benchmark_values, by = "company") %>%
+  mutate(
+    naive_error = actual - naive_forecast,
+    mean_error = actual - mean_forecast
+  )
+
+benchmark_error_summary <- all_company_forecasts %>%
+  group_by(company) %>%
+  summarise(
+    mean_RMSFE = sqrt(mean(mean_error^2)),
+    naive_RMSFE = sqrt(mean(naive_error^2)),
+    selected_ARMA_RMSFE = sqrt(mean(selected_arma_error^2)),
+    .groups = "drop"
+  )
+
+kable(
+  benchmark_error_summary,
+  digits = 6,
+  caption = "Test-sample RMSFE by company and forecasting method"
+)
+```
+
+Task: Create a comparison table with rows for the Mean, Naive, and Selected ARMA methods; columns for Companies A through E; and RMSFE in each cell.
+
+```{r}
+rmsfe_comparison <- all_company_forecasts %>%
+  select(
+    company,
+    mean_error,
+    naive_error,
+    selected_arma_error
+  ) %>%
+  pivot_longer(
+    cols = ends_with("_error"),
+    names_to = "method",
+    values_to = "error"
+  ) %>%
+  mutate(
+    method = recode(
+      method,
+      mean_error = "Mean",
+      naive_error = "Naive",
+      selected_arma_error = "Selected ARMA"
+    )
+  ) %>%
+  group_by(method, company) %>%
+  summarise(
+    RMSFE = ?,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    method = factor(
+      method,
+      levels = c("Mean", "Naive", "Selected ARMA")
+    ),
+    company = paste("Company", company)
+  ) %>%
+  arrange(method) %>%
+  pivot_wider(
+    names_from = company,
+    values_from = RMSFE,
+    names_sort = TRUE
+  )
+
+kable(
+  rmsfe_comparison,
+  digits = 6,
+  caption = "RMSFE comparison for Companies A-E"
+)
+```
+
+Q: Interpret
+
+A:
+
+?
+
+In your interpretation, distinguish revenue-forecasting performance from stock-return forecasting and explain what additional information an equity analyst would need before drawing an investment conclusion.

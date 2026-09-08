@@ -1,0 +1,3884 @@
+---
+title: "The U.S. Listed Equity Universe Versus the S&P 500"
+subtitle: "A reproducible exploratory data analysis of scale, size, liquidity, valuation, and sector concentration"
+author: "Author Name"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: right
+    number-sections: true
+    code-fold: true
+    code-summary: "Show R code"
+    code-tools: true
+    code-overflow: wrap
+    df-print: paged
+    theme: cosmo
+    fig-responsive: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: true
+  message: false
+  error: false
+  freeze: false
+knitr:
+  opts_chunk:
+    fig.align: center
+    fig.width: 11
+    fig.height: 6.5
+    dpi: 160
+---
+
+## Purpose and analytical scope
+
+This report compares the current U.S. listed-security universe on NASDAQ, NYSE, and AMEX with the current S&P 500 benchmark. It uses two related samples:
+
+1. **Full listed-security universe:** all usable exchange-directory records, including common stocks, ADRs, funds, preferred securities, warrants, rights, units, and other listings. This sample is used in Module 1.
+2. **Operating-company equity universe:** securities heuristically classified as common equity or ADRs, reduced to one record per Yahoo-compatible symbol, with valid Yahoo market data, positive market capitalization and price, and populated sector and industry fields. This sample is used in Modules 2 through 4.
+
+The security-type classification is heuristic. Missing fundamental fields are never replaced with fabricated values. The report preserves missing values, reports coverage explicitly, and continues when individual remote requests fail.
+
+Data sources are the NASDAQ exchange screener accessed through `tidyquant::tq_exchange()`, State Street holdings accessed through `tidyquant::tq_index("SP500")`, and Yahoo Finance market data accessed through `quantmod` and `tidyquant`.
+
+## Configuration and setup
+
+```{r}
+#| label: setup
+#| include: true
+
+required_packages <- c(
+  "tidyverse",
+  "tidyquant",
+  "quantmod",
+  "dplyr",
+  "ggplot2",
+  "patchwork",
+  "scales",
+  "knitr"
+)
+
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0L) {
+  stop(
+    paste0(
+      "Install the following required packages before rendering this document: ",
+      paste(missing_packages, collapse = ", ")
+    ),
+    call. = FALSE
+  )
+}
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(tidyquant)
+  library(quantmod)
+  library(patchwork)
+  library(scales)
+})
+
+options(
+  scipen = 999,
+  dplyr.summarise.inform = FALSE,
+  width = 120
+)
+
+# ---- User-adjustable configuration -----------------------------------------
+analysis_date <- Sys.Date()
+lookback_calendar_days <- 60L
+liquidity_trading_days <- 30L
+minimum_valid_trading_days <- 20L
+cache_directory <- "data_cache"
+refresh_data <- FALSE # FALSE = use cache when available; TRUE = force new downloads
+# On the first run, data are downloaded automatically because no cache exists.
+# On subsequent runs, FALSE reuses the existing cache.
+quote_batch_size <- 150L
+price_batch_size <- 50L
+max_retry_attempts <- 3L
+max_recursive_split_depth <- 2L
+retry_base_delay_seconds <- 1
+pause_between_batches_seconds <- 0.35
+
+# quantmod's current Yahoo implementation accepts fewer than 100 symbols per
+# direct request. The configured quote_batch_size remains the user-facing
+# maximum, while this provider cap prevents oversized direct calls.
+provider_quote_limit <- 90L
+
+dir.create(cache_directory, recursive = TRUE, showWarnings = FALSE)
+
+price_from_date <- analysis_date - lookback_calendar_days
+price_to_date <- analysis_date + 1L
+
+benchmark_colors <- c(
+  "S&P 500" = "#123B66",
+  "Broader Market" = "#667480"
+)
+
+sector_measure_colors <- c(
+  "S&P 500 constituent weight" = "#123B66",
+  "Broad-universe ticker-count share" = "#667480",
+  "Broad-universe market-cap share" = "#A7AFB5"
+)
+
+benchmark_levels <- c("Broader Market", "S&P 500")
+
+report_theme <- theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10.5, margin = margin(b = 8)),
+    plot.caption = element_text(size = 8.5, color = "grey35", hjust = 0),
+    axis.title = element_text(face = "bold"),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold"),
+    plot.margin = margin(8, 12, 8, 8)
+  )
+
+theme_set(report_theme)
+
+# ---- General helpers --------------------------------------------------------
+`%||%` <- function(x, y) {
+  if (is.null(x) || length(x) == 0L) y else x
+}
+
+snake_names <- function(x) {
+  x |>
+    stringr::str_replace_all("([a-z0-9])([A-Z])", "\\1_\\2") |>
+    stringr::str_replace_all("[^A-Za-z0-9]+", "_") |>
+    stringr::str_replace_all("^_+|_+$", "") |>
+    stringr::str_to_lower()
+}
+
+clean_text_na <- function(x) {
+  y <- as.character(x)
+  y <- stringr::str_squish(y)
+  missing_tokens <- c("", "NA", "N/A", "NONE", "NULL", "NAN", "--", "-")
+  y[stringr::str_to_upper(y) %in% missing_tokens] <- NA_character_
+  y
+}
+
+safe_numeric <- function(x) {
+  if (is.numeric(x)) {
+    return(as.numeric(x))
+  }
+
+  y <- clean_text_na(x)
+  y <- stringr::str_replace_all(y, ",", "")
+  y <- stringr::str_replace_all(y, "\\$", "")
+  y <- stringr::str_replace_all(y, "%", "")
+  suppressWarnings(as.numeric(y))
+}
+
+positive_or_na <- function(x) {
+  y <- safe_numeric(x)
+  y[!is.finite(y) | y <= 0] <- NA_real_
+  y
+}
+
+nonnegative_or_na <- function(x) {
+  y <- safe_numeric(x)
+  y[!is.finite(y) | y < 0] <- NA_real_
+  y
+}
+
+ensure_columns <- function(data, columns) {
+  missing_columns <- setdiff(columns, names(data))
+  for (column in missing_columns) {
+    data[[column]] <- rep(NA, nrow(data))
+  }
+  data
+}
+
+first_existing_column <- function(data, candidates, required = TRUE) {
+  hit <- intersect(candidates, names(data))
+  if (length(hit) > 0L) {
+    return(hit[[1]])
+  }
+
+  if (required) {
+    stop(
+      paste0(
+        "None of the required columns were found: ",
+        paste(candidates, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  NULL
+}
+
+normalize_yahoo_symbol <- function(x) {
+  y <- clean_text_na(x)
+  y <- stringr::str_to_upper(y)
+  y <- stringr::str_replace_all(y, "\\s+", "")
+
+  # Common preferred-share notations used by U.S. listing directories.
+  y <- stringr::str_replace(y, "^([A-Z0-9]+)\\^([A-Z0-9]+)$", "\\1-P\\2")
+  y <- stringr::str_replace(y, "^([A-Z0-9]+)[.]PR([A-Z0-9]+)$", "\\1-P\\2")
+  y <- stringr::str_replace(y, "^([A-Z0-9]+)-PR([A-Z0-9]+)$", "\\1-P\\2")
+
+  # Yahoo generally uses dashes for class-share separators.
+  y <- stringr::str_replace_all(y, "[./]", "-")
+  y <- stringr::str_replace_all(y, "\\$", "-P")
+  y <- stringr::str_replace_all(y, "[^A-Z0-9=^-]", "")
+  y[y == ""] <- NA_character_
+  y
+}
+
+standardize_sector <- function(x) {
+  original <- clean_text_na(x)
+  y <- stringr::str_to_lower(original)
+
+  dplyr::case_when(
+    is.na(y) ~ NA_character_,
+    stringr::str_detect(y, "information technology|technology") ~ "Information Technology",
+    stringr::str_detect(y, "health care|healthcare|health") ~ "Health Care",
+    stringr::str_detect(y, "financial services|financials|finance") ~ "Financials",
+    stringr::str_detect(y, "consumer discretionary|consumer cyclical|consumer services") ~ "Consumer Discretionary",
+    stringr::str_detect(y, "consumer staples|consumer defensive|consumer non-durables") ~ "Consumer Staples",
+    stringr::str_detect(y, "communication services|telecommunication") ~ "Communication Services",
+    stringr::str_detect(y, "basic materials|materials") ~ "Materials",
+    stringr::str_detect(y, "industrial") ~ "Industrials",
+    stringr::str_detect(y, "real estate") ~ "Real Estate",
+    stringr::str_detect(y, "utilit") ~ "Utilities",
+    stringr::str_detect(y, "energy") ~ "Energy",
+    TRUE ~ stringr::str_to_title(original)
+  )
+}
+
+classify_security_type <- function(company, symbol) {
+  company_upper <- stringr::str_to_upper(dplyr::coalesce(clean_text_na(company), ""))
+  symbol_upper <- stringr::str_to_upper(dplyr::coalesce(clean_text_na(symbol), ""))
+
+  is_warrant_or_right <-
+    stringr::str_detect(company_upper, "\\bWARRANTS?\\b|\\bRIGHTS?\\b") |
+    stringr::str_detect(symbol_upper, "[-.](WS|WT|RT)$")
+
+  is_adr <-
+    stringr::str_detect(
+      company_upper,
+      "AMERICAN DEPOSITARY|DEPOSITARY RECEIPT|\\bADR\\b|\\bADS\\b"
+    ) &
+    !stringr::str_detect(company_upper, "PREFERRED")
+
+  is_preferred <-
+    stringr::str_detect(
+      company_upper,
+      "PREFERRED|PREFERENCE SHARE|DEPOSITARY SHARES.*PREFERRED|\\bPFD\\b"
+    ) |
+    stringr::str_detect(symbol_upper, "\\^|[-.]P[A-Z0-9]*$")
+
+  is_etf_or_etn <- stringr::str_detect(
+    company_upper,
+    paste0(
+      "\\bETF\\b|\\bETN\\b|EXCHANGE[- ]TRADED|",
+      "ISHARES|SPDR|PROSHARES|DIREXION|GLOBAL X|WISDOMTREE|",
+      "VANGUARD.*INDEX|INVESCO.*ETF|FIRST TRUST.*ETF"
+    )
+  )
+
+  is_unit_or_spac <-
+    stringr::str_detect(
+      company_upper,
+      "\\bUNITS?\\b|ACQUISITION CORP|BLANK CHECK|SPECIAL PURPOSE ACQUISITION|\\bSPAC\\b"
+    ) |
+    (
+      stringr::str_detect(symbol_upper, "U$") &
+      stringr::str_detect(company_upper, "ACQUISITION|HOLDINGS")
+    )
+
+  is_fund <- stringr::str_detect(
+    company_upper,
+    paste0(
+      "CLOSED[- ]END|\\bFUND\\b|PORTFOLIO|MUTUAL FUND|",
+      "INCOME TRUST|INVESTMENT TRUST|TERM TRUST"
+    )
+  )
+
+  is_other_security <- stringr::str_detect(
+    company_upper,
+    "\\bBONDS?\\b|\\bDEBENTURES?\\b|CERTIFICATES?|STRUCTURED NOTES?"
+  )
+
+  dplyr::case_when(
+    is_warrant_or_right ~ "Warrant or Right",
+    is_adr ~ "ADR",
+    is_preferred ~ "Preferred Stock",
+    is_etf_or_etn ~ "ETF or ETN",
+    is_unit_or_spac ~ "Unit or SPAC",
+    is_fund ~ "Closed-End Fund or Other Fund",
+    is_other_security ~ "Other or Unclassified",
+    TRUE ~ "Common Equity"
+  )
+}
+
+safe_median <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) == 0L) NA_real_ else stats::median(x)
+}
+
+safe_quantile <- function(x, probability) {
+  x <- x[is.finite(x)]
+  if (length(x) == 0L) {
+    return(NA_real_)
+  }
+  unname(stats::quantile(x, probs = probability, na.rm = TRUE, names = FALSE))
+}
+
+safe_rate <- function(numerator, denominator) {
+  if (is.na(denominator) || denominator == 0) NA_real_ else numerator / denominator
+}
+
+format_count <- function(x) {
+  dplyr::if_else(
+    is.na(x),
+    "NA",
+    scales::number(x, accuracy = 1, big.mark = ",")
+  )
+}
+
+format_dollar_short <- function(x) {
+  dplyr::if_else(
+    is.na(x),
+    "NA",
+    scales::dollar(x, accuracy = 0.1, scale_cut = scales::cut_short_scale())
+  )
+}
+
+format_number_short <- function(x) {
+  dplyr::if_else(
+    is.na(x),
+    "NA",
+    scales::number(x, accuracy = 0.1, scale_cut = scales::cut_short_scale())
+  )
+}
+
+format_percent_1 <- function(x) {
+  dplyr::if_else(
+    is.na(x),
+    "NA",
+    scales::percent(x, accuracy = 0.1)
+  )
+}
+
+show_table <- function(data, caption = NULL, digits = 2) {
+  if (!is.data.frame(data) || nrow(data) == 0L) {
+    cat("*No observations are available for this table.*\n\n")
+    return(invisible(NULL))
+  }
+
+  print(
+    knitr::kable(
+      data,
+      format = "html",
+      caption = caption,
+      digits = digits,
+      escape = TRUE,
+      row.names = FALSE
+    )
+  )
+  cat("\n\n")
+  invisible(data)
+}
+
+empty_plot <- function(title, message, caption = NULL) {
+  ggplot() +
+    annotate("text", x = 0, y = 0, label = message, size = 4.2) +
+    xlim(-1, 1) +
+    ylim(-1, 1) +
+    labs(title = title, caption = caption) +
+    theme_void(base_size = 11) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.caption = element_text(size = 8.5, color = "grey35", hjust = 0),
+      plot.margin = margin(8, 12, 8, 8)
+    )
+}
+
+split_vector <- function(x, size) {
+  if (length(x) == 0L) {
+    return(list())
+  }
+  size <- max(1L, as.integer(size))
+  split(x, ceiling(seq_along(x) / size))
+}
+
+symbol_signature <- function(symbols) {
+  symbols <- sort(unique(stats::na.omit(symbols)))
+  temporary_file <- tempfile(fileext = ".txt")
+  on.exit(unlink(temporary_file), add = TRUE)
+  writeLines(symbols, temporary_file, useBytes = TRUE)
+  substr(unname(tools::md5sum(temporary_file)), 1L, 12L)
+}
+
+# ---- Condition capture, retries, and caching -------------------------------
+capture_call <- function(function_to_run) {
+  captured_warnings <- character()
+
+  result <- tryCatch(
+    withCallingHandlers(
+      function_to_run(),
+      warning = function(warning_condition) {
+        captured_warnings <<- c(
+          captured_warnings,
+          conditionMessage(warning_condition)
+        )
+        invokeRestart("muffleWarning")
+      }
+    ),
+    error = function(error_condition) {
+      structure(
+        list(message = conditionMessage(error_condition)),
+        class = "captured_error"
+      )
+    }
+  )
+
+  if (inherits(result, "captured_error")) {
+    return(list(
+      ok = FALSE,
+      value = NULL,
+      warnings = unique(captured_warnings),
+      error = result$message
+    ))
+  }
+
+  list(
+    ok = TRUE,
+    value = result,
+    warnings = unique(captured_warnings),
+    error = NA_character_
+  )
+}
+
+retry_captured <- function(
+  function_to_run,
+  attempts = max_retry_attempts,
+  base_delay_seconds = retry_base_delay_seconds
+) {
+  attempts <- max(1L, as.integer(attempts))
+  all_warnings <- character()
+  all_errors <- character()
+
+  for (attempt_number in seq_len(attempts)) {
+    attempt <- capture_call(function_to_run)
+    all_warnings <- c(all_warnings, attempt$warnings)
+
+    if (isTRUE(attempt$ok)) {
+      return(list(
+        ok = TRUE,
+        value = attempt$value,
+        warnings = unique(all_warnings),
+        errors = unique(all_errors),
+        attempts = attempt_number
+      ))
+    }
+
+    all_errors <- c(all_errors, attempt$error)
+
+    if (attempt_number < attempts) {
+      Sys.sleep(base_delay_seconds * 2^(attempt_number - 1L))
+    }
+  }
+
+  list(
+    ok = FALSE,
+    value = NULL,
+    warnings = unique(all_warnings),
+    errors = unique(all_errors),
+    attempts = attempts
+  )
+}
+
+read_cache_record <- function(path) {
+  cached <- readRDS(path)
+
+  if (is.list(cached) && all(c("value", "metadata") %in% names(cached))) {
+    return(cached)
+  }
+
+  list(
+    value = cached,
+    metadata = list(
+      cached_at = as.POSIXct(file.info(path)$mtime),
+      analysis_date = NA_character_,
+      cache_stem = tools::file_path_sans_ext(basename(path))
+    )
+  )
+}
+
+cache_get <- function(
+  cache_stem,
+  fetch_function,
+  validator = function(x) !is.null(x),
+  fallback_prefix = NULL,
+  fetch_attempts = max_retry_attempts,
+  return_invalid_fetch = FALSE
+) {
+  exact_path <- file.path(cache_directory, paste0(cache_stem, ".rds"))
+
+  make_metadata_row <- function(
+    source,
+    path,
+    cached_at,
+    cache_analysis_date,
+    attempts,
+    warnings,
+    errors
+  ) {
+    tibble::tibble(
+      dataset = cache_stem,
+      source = source,
+      cache_file = ifelse(is.na(path), NA_character_, basename(path)),
+      cache_analysis_date = as.character(cache_analysis_date),
+      cached_at = as.character(cached_at),
+      attempts = attempts,
+      warning_count = length(unique(stats::na.omit(warnings))),
+      error_count = length(unique(stats::na.omit(errors)))
+    )
+  }
+
+  if (!refresh_data && file.exists(exact_path)) {
+    cached_attempt <- capture_call(function() read_cache_record(exact_path))
+
+    if (isTRUE(cached_attempt$ok) && validator(cached_attempt$value$value)) {
+      record <- cached_attempt$value
+      return(list(
+        value = record$value,
+        meta = make_metadata_row(
+          source = "Exact cache",
+          path = exact_path,
+          cached_at = record$metadata$cached_at %||% file.info(exact_path)$mtime,
+          cache_analysis_date = record$metadata$analysis_date %||% NA_character_,
+          attempts = 0L,
+          warnings = cached_attempt$warnings,
+          errors = character()
+        )
+      ))
+    }
+  }
+
+  fetched <- retry_captured(fetch_function, attempts = fetch_attempts)
+
+  if (isTRUE(fetched$ok) && validator(fetched$value)) {
+    record <- list(
+      value = fetched$value,
+      metadata = list(
+        cached_at = Sys.time(),
+        analysis_date = as.character(analysis_date),
+        cache_stem = cache_stem
+      )
+    )
+
+    save_attempt <- capture_call(function() saveRDS(record, exact_path))
+
+    cache_write_succeeded <- isTRUE(save_attempt$ok)
+
+    return(list(
+      value = fetched$value,
+      meta = make_metadata_row(
+        source = if (cache_write_succeeded) {
+          "Fresh download"
+        } else {
+          "Fresh download (cache write failed)"
+        },
+        path = if (cache_write_succeeded) exact_path else NA_character_,
+        cached_at = record$metadata$cached_at,
+        cache_analysis_date = record$metadata$analysis_date,
+        attempts = fetched$attempts,
+        warnings = c(fetched$warnings, save_attempt$warnings),
+        errors = c(
+          fetched$errors,
+          if (cache_write_succeeded) character() else save_attempt$error
+        )
+      )
+    ))
+  }
+
+  if (!is.null(fallback_prefix)) {
+    fallback_files <- list.files(
+      cache_directory,
+      full.names = TRUE
+    )
+    fallback_basenames <- basename(fallback_files)
+    fallback_files <- fallback_files[
+      startsWith(fallback_basenames, fallback_prefix) &
+        stringr::str_detect(fallback_basenames, "[.]rds$")
+    ]
+    fallback_files <- setdiff(fallback_files, exact_path)
+
+    if (length(fallback_files) > 0L) {
+      fallback_files <- fallback_files[
+        order(file.info(fallback_files)$mtime, decreasing = TRUE)
+      ]
+
+      for (fallback_path in fallback_files) {
+        fallback_attempt <- capture_call(function() read_cache_record(fallback_path))
+
+        if (
+          isTRUE(fallback_attempt$ok) &&
+          validator(fallback_attempt$value$value)
+        ) {
+          record <- fallback_attempt$value
+          return(list(
+            value = record$value,
+            meta = make_metadata_row(
+              source = "Prior cache fallback",
+              path = fallback_path,
+              cached_at = record$metadata$cached_at %||% file.info(fallback_path)$mtime,
+              cache_analysis_date = record$metadata$analysis_date %||% NA_character_,
+              attempts = fetched$attempts,
+              warnings = c(fetched$warnings, fallback_attempt$warnings),
+              errors = fetched$errors
+            )
+          ))
+        }
+      }
+    }
+  }
+
+  if (
+    isTRUE(return_invalid_fetch) &&
+    isTRUE(fetched$ok) &&
+    !is.null(fetched$value)
+  ) {
+    return(list(
+      value = fetched$value,
+      meta = make_metadata_row(
+        source = "Fresh download (not cached)",
+        path = NA_character_,
+        cached_at = Sys.time(),
+        cache_analysis_date = as.character(analysis_date),
+        attempts = fetched$attempts,
+        warnings = fetched$warnings,
+        errors = fetched$errors
+      )
+    ))
+  }
+
+  list(
+    value = NULL,
+    meta = make_metadata_row(
+      source = "Unavailable",
+      path = NA_character_,
+      cached_at = NA_character_,
+      cache_analysis_date = NA_character_,
+      attempts = fetched$attempts,
+      warnings = fetched$warnings,
+      errors = fetched$errors
+    )
+  )
+}
+
+# ---- Reusable reporting helpers --------------------------------------------
+metric_coverage_table <- function(data, metrics, labels = metrics) {
+  if (!is.data.frame(data) || nrow(data) == 0L) {
+    return(tibble::tibble())
+  }
+
+  purrr::map2_dfr(metrics, labels, function(metric, label) {
+    values <- data[[metric]]
+    valid <- is.finite(values)
+
+    tibble::tibble(
+      metric = label,
+      initial_observations = nrow(data),
+      valid_observations = sum(valid, na.rm = TRUE),
+      missing_observations = sum(!valid, na.rm = TRUE),
+      missingness_rate = mean(!valid),
+      sp500_valid = sum(valid & data$is_sp500, na.rm = TRUE),
+      broader_market_valid = sum(valid & !data$is_sp500, na.rm = TRUE)
+    )
+  })
+}
+
+make_density_plot <- function(
+  data,
+  variable,
+  title,
+  subtitle,
+  x_label,
+  caption,
+  log10_axis = FALSE,
+  lower_bound = NULL,
+  upper_bound = NULL
+) {
+  if (!is.data.frame(data) || nrow(data) == 0L || !(variable %in% names(data))) {
+    return(empty_plot(title, "No usable observations are available.", caption))
+  }
+
+  plot_data <- data |>
+    dplyr::filter(is.finite(.data[[variable]]))
+
+  if (!is.null(lower_bound)) {
+    plot_data <- plot_data |>
+      dplyr::filter(.data[[variable]] >= lower_bound)
+  }
+
+  if (!is.null(upper_bound)) {
+    plot_data <- plot_data |>
+      dplyr::filter(.data[[variable]] <= upper_bound)
+  }
+
+  if (isTRUE(log10_axis)) {
+    plot_data <- plot_data |>
+      dplyr::filter(.data[[variable]] > 0)
+  }
+
+  plot_data <- plot_data |>
+    dplyr::group_by(benchmark_group) |>
+    dplyr::filter(
+      dplyr::n() >= 2L,
+      dplyr::n_distinct(.data[[variable]]) >= 2L
+    ) |>
+    dplyr::ungroup()
+
+  if (nrow(plot_data) < 2L || dplyr::n_distinct(plot_data[[variable]]) < 2L) {
+    return(empty_plot(title, "Too few distinct observations are available for a density estimate.", caption))
+  }
+
+  plot <- ggplot(
+    plot_data,
+    aes(
+      x = .data[[variable]],
+      color = benchmark_group,
+      fill = benchmark_group
+    )
+  ) +
+    geom_density(alpha = 0.28, linewidth = 0.9, adjust = 1.05, na.rm = TRUE) +
+    scale_color_manual(values = benchmark_colors, drop = FALSE) +
+    scale_fill_manual(values = benchmark_colors, drop = FALSE) +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      x = x_label,
+      y = "Density",
+      caption = caption
+    )
+
+  if (isTRUE(log10_axis)) {
+    plot <- plot +
+      scale_x_log10(
+        labels = scales::label_dollar(
+          accuracy = 1,
+          scale_cut = scales::cut_short_scale()
+        )
+      )
+  }
+
+  plot
+}
+
+package_versions <- tibble::tibble(
+  package = required_packages,
+  version = vapply(
+    required_packages,
+    function(package_name) as.character(utils::packageVersion(package_name)),
+    character(1)
+  )
+)
+```
+
+```{r}
+#| label: configuration-summary
+#| results: asis
+
+configuration_table <- tibble::tibble(
+  setting = c(
+    "Analysis date",
+    "Historical lookback (calendar days)",
+    "Liquidity window (trading days)",
+    "Minimum valid trading days",
+    "Quote batch size (configured maximum)",
+    "Quote batch size (provider-effective maximum)",
+    "Price batch size",
+    "Maximum retry attempts",
+    "Maximum recursive split depth",
+    "Pause between batches (seconds)",
+    "Refresh remote data",
+    "Cache directory"
+  ),
+  value = c(
+    as.character(analysis_date),
+    as.character(lookback_calendar_days),
+    as.character(liquidity_trading_days),
+    as.character(minimum_valid_trading_days),
+    as.character(quote_batch_size),
+    as.character(min(quote_batch_size, provider_quote_limit)),
+    as.character(price_batch_size),
+    as.character(max_retry_attempts),
+    as.character(max_recursive_split_depth),
+    as.character(pause_between_batches_seconds),
+    as.character(refresh_data),
+    cache_directory
+  )
+)
+
+show_table(configuration_table, "Analysis configuration")
+show_table(package_versions, "Package versions used for this render")
+```
+
+## Data acquisition and construction of the master universe
+
+### Exchange directories and S&P 500 membership
+
+```{r}
+#| label: acquire-directories-and-index
+
+standardize_exchange_download <- function(data, exchange_name) {
+  if (!is.data.frame(data) || nrow(data) == 0L) {
+    stop(paste0("No records were returned for ", exchange_name, "."), call. = FALSE)
+  }
+
+  names(data) <- snake_names(names(data))
+  data <- ensure_columns(
+    data,
+    c(
+      "symbol",
+      "company",
+      "last_sale_price",
+      "market_cap",
+      "country",
+      "ipo_year",
+      "sector",
+      "industry"
+    )
+  )
+
+  data |>
+    dplyr::transmute(
+      symbol_original = clean_text_na(symbol),
+      company = clean_text_na(company),
+      exchange = stringr::str_to_upper(exchange_name),
+      last_sale_price_exchange = positive_or_na(last_sale_price),
+      market_cap_exchange = positive_or_na(market_cap),
+      country = clean_text_na(country),
+      ipo_year = suppressWarnings(as.integer(ipo_year)),
+      sector_raw = clean_text_na(sector),
+      industry_raw = clean_text_na(industry)
+    )
+}
+
+fetch_exchange_one <- function(exchange_name) {
+  downloaded <- tidyquant::tq_exchange(exchange_name)
+
+  if (!is.data.frame(downloaded) || nrow(downloaded) == 0L) {
+    stop(
+      paste0("tidyquant::tq_exchange() returned no usable records for ", exchange_name, "."),
+      call. = FALSE
+    )
+  }
+
+  standardize_exchange_download(downloaded, exchange_name)
+}
+
+standardize_sp500_download <- function(data, retrieval_mode) {
+  if (!is.data.frame(data) || nrow(data) == 0L) {
+    stop("No S&P 500 constituent records were returned.", call. = FALSE)
+  }
+
+  names(data) <- snake_names(names(data))
+
+  symbol_column <- first_existing_column(data, c("symbol", "ticker"))
+  company_column <- first_existing_column(data, c("company", "name"), required = FALSE)
+  weight_column <- first_existing_column(
+    data,
+    c("weight", "weight_percent", "portfolio_weight"),
+    required = FALSE
+  )
+  sector_column <- first_existing_column(
+    data,
+    c("sector", "gics_sector"),
+    required = FALSE
+  )
+
+  output <- tibble::tibble(
+    sp500_symbol_original = clean_text_na(data[[symbol_column]]),
+    sp500_company = if (is.null(company_column)) {
+      rep(NA_character_, nrow(data))
+    } else {
+      clean_text_na(data[[company_column]])
+    },
+    sp500_weight_raw = if (is.null(weight_column)) {
+      rep(NA_real_, nrow(data))
+    } else {
+      safe_numeric(data[[weight_column]])
+    },
+    sp500_sector_raw = if (is.null(sector_column)) {
+      rep(NA_character_, nrow(data))
+    } else {
+      clean_text_na(data[[sector_column]])
+    },
+    sp500_retrieval_mode = retrieval_mode
+  ) |>
+    dplyr::mutate(
+      symbol_yahoo = normalize_yahoo_symbol(sp500_symbol_original),
+      sp500_sector_clean = standardize_sector(sp500_sector_raw)
+    ) |>
+    dplyr::filter(!is.na(symbol_yahoo)) |>
+    dplyr::distinct(symbol_yahoo, .keep_all = TRUE)
+
+  positive_weight_total <- sum(
+    output$sp500_weight_raw[
+      is.finite(output$sp500_weight_raw) & output$sp500_weight_raw > 0
+    ],
+    na.rm = TRUE
+  )
+
+  output |>
+    dplyr::mutate(
+      sp500_weight = dplyr::if_else(
+        is.finite(sp500_weight_raw) &
+          sp500_weight_raw > 0 &
+          positive_weight_total > 0,
+        sp500_weight_raw / positive_weight_total,
+        NA_real_
+      ),
+      sp500_member = TRUE
+    )
+}
+
+fetch_sp500 <- function() {
+  tq_index_formals <- names(formals(tidyquant::tq_index))
+  supports_explicit_fallback <- "use_fallback" %in% tq_index_formals
+
+  live_attempt <- capture_call(function() {
+    if (supports_explicit_fallback) {
+      tidyquant::tq_index("SP500", use_fallback = FALSE)
+    } else {
+      tidyquant::tq_index("SP500")
+    }
+  })
+
+  if (
+    isTRUE(live_attempt$ok) &&
+    is.data.frame(live_attempt$value) &&
+    nrow(live_attempt$value) > 0L
+  ) {
+    retrieval_mode <- if (supports_explicit_fallback) {
+      "Live SSGA holdings"
+    } else {
+      "tidyquant default retrieval"
+    }
+
+    return(standardize_sp500_download(live_attempt$value, retrieval_mode))
+  }
+
+  if (!supports_explicit_fallback) {
+    stop(
+      "The S&P 500 constituent table could not be retrieved by tidyquant::tq_index().",
+      call. = FALSE
+    )
+  }
+
+  packaged_fallback <- tidyquant::tq_index("SP500", use_fallback = TRUE)
+
+  if (!is.data.frame(packaged_fallback) || nrow(packaged_fallback) == 0L) {
+    stop(
+      "Both the live S&P 500 retrieval and tidyquant's packaged fallback were unavailable.",
+      call. = FALSE
+    )
+  }
+
+  standardize_sp500_download(
+    packaged_fallback,
+    "tidyquant packaged fallback"
+  )
+}
+
+exchange_names <- c("NASDAQ", "NYSE", "AMEX")
+
+exchange_results <- purrr::set_names(exchange_names) |>
+  purrr::map(function(exchange_name) {
+    cache_get(
+      cache_stem = paste0(
+        "exchange_",
+        stringr::str_to_lower(exchange_name),
+        "_",
+        analysis_date
+      ),
+      fetch_function = function() fetch_exchange_one(exchange_name),
+      validator = function(x) {
+        required_exchange_columns <- c(
+          "symbol_original",
+          "company",
+          "exchange",
+          "last_sale_price_exchange",
+          "market_cap_exchange",
+          "sector_raw",
+          "industry_raw"
+        )
+
+        is.data.frame(x) &&
+          nrow(x) > 0L &&
+          all(required_exchange_columns %in% names(x))
+      },
+      fallback_prefix = paste0(
+        "exchange_",
+        stringr::str_to_lower(exchange_name),
+        "_"
+      )
+    )
+  })
+
+available_exchange_data <- exchange_results |>
+  purrr::map("value") |>
+  purrr::keep(~ is.data.frame(.x) && nrow(.x) > 0L)
+
+if (length(available_exchange_data) == 0L) {
+  stop(
+    "No exchange directory could be retrieved and no usable exchange cache was found.",
+    call. = FALSE
+  )
+}
+
+sp500_result <- cache_get(
+  cache_stem = paste0("sp500_constituents_", analysis_date),
+  fetch_function = fetch_sp500,
+  validator = function(x) {
+    required_sp500_columns <- c(
+      "sp500_symbol_original",
+      "symbol_yahoo",
+      "sp500_company",
+      "sp500_weight",
+      "sp500_sector_clean",
+      "sp500_retrieval_mode"
+    )
+
+    is.data.frame(x) &&
+      nrow(x) > 0L &&
+      all(required_sp500_columns %in% names(x))
+  },
+  fallback_prefix = "sp500_constituents_"
+)
+
+if (!is.data.frame(sp500_result$value) || nrow(sp500_result$value) == 0L) {
+  stop(
+    "The S&P 500 constituent table is unavailable and no usable cache was found.",
+    call. = FALSE
+  )
+}
+
+exchange_cache_manifest <- exchange_results |>
+  purrr::map_dfr("meta")
+
+cache_manifest <- dplyr::bind_rows(
+  exchange_cache_manifest,
+  sp500_result$meta
+)
+
+exchange_download_status <- tibble::tibble(
+  exchange = exchange_names,
+  records = purrr::map_int(
+    exchange_results,
+    function(result) {
+      if (is.data.frame(result$value)) nrow(result$value) else 0L
+    }
+  ),
+  source = purrr::map_chr(exchange_results, ~ .x$meta$source[[1]])
+)
+
+sp500_df <- sp500_result$value
+raw_universe_df <- dplyr::bind_rows(available_exchange_data)
+```
+
+```{r}
+#| label: acquisition-tables
+#| results: asis
+
+show_table(exchange_download_status, "Exchange-directory retrieval status")
+show_table(
+  cache_manifest,
+  "Cache and retrieval manifest for essential source tables"
+)
+
+unavailable_exchanges <- exchange_download_status |>
+  dplyr::filter(records == 0L) |>
+  dplyr::pull(exchange)
+
+if (length(unavailable_exchanges) > 0L) {
+  cat(
+    paste0(
+      "::: {.callout-warning}
+",
+      "## Partial exchange universe
+
+",
+      "No live or cached directory was available for: ",
+      paste(unavailable_exchanges, collapse = ", "),
+      ". The report continues with the available exchanges, and all universe-level results should be interpreted as incomplete.
+",
+      ":::
+
+"
+    )
+  )
+}
+
+sp500_retrieval_table <- sp500_df |>
+  dplyr::count(sp500_retrieval_mode, name = "constituent_records")
+show_table(sp500_retrieval_table, "S&P 500 source mode")
+```
+
+### Cleaning, symbol normalization, and membership matching
+
+```{r}
+#| label: clean-master-universe
+
+raw_universe_count <- nrow(raw_universe_df)
+
+invalid_entry_log <- raw_universe_df |>
+  dplyr::mutate(
+    invalid_symbol = is.na(symbol_original),
+    invalid_company = is.na(company)
+  ) |>
+  dplyr::summarise(
+    starting_records = dplyr::n(),
+    missing_symbol = sum(invalid_symbol),
+    missing_company = sum(invalid_company),
+    removed_invalid_records = sum(invalid_symbol | invalid_company)
+  )
+
+universe_clean_stage_1 <- raw_universe_df |>
+  dplyr::filter(!is.na(symbol_original), !is.na(company)) |>
+  dplyr::mutate(
+    symbol_original = stringr::str_to_upper(symbol_original),
+    symbol_yahoo = normalize_yahoo_symbol(symbol_original),
+    company = clean_text_na(company),
+    sector_raw = clean_text_na(sector_raw),
+    industry_raw = clean_text_na(industry_raw),
+    country = clean_text_na(country),
+    market_cap_exchange = positive_or_na(market_cap_exchange),
+    last_sale_price_exchange = positive_or_na(last_sale_price_exchange)
+  )
+
+exact_duplicate_count <- nrow(universe_clean_stage_1) -
+  nrow(dplyr::distinct(universe_clean_stage_1))
+
+universe_clean_stage_2 <- universe_clean_stage_1 |>
+  dplyr::distinct()
+
+same_listing_duplicate_table <- universe_clean_stage_2 |>
+  dplyr::count(exchange, symbol_original, name = "record_count") |>
+  dplyr::filter(record_count > 1L) |>
+  dplyr::arrange(dplyr::desc(record_count), exchange, symbol_original)
+
+same_listing_duplicate_count <- sum(
+  pmax(same_listing_duplicate_table$record_count - 1L, 0L)
+)
+
+universe_clean_stage_3 <- universe_clean_stage_2 |>
+  dplyr::mutate(
+    completeness_score =
+      as.integer(!is.na(company)) +
+      as.integer(!is.na(market_cap_exchange)) +
+      as.integer(!is.na(last_sale_price_exchange)) +
+      as.integer(!is.na(sector_raw)) +
+      as.integer(!is.na(industry_raw)) +
+      as.integer(!is.na(country))
+  ) |>
+  dplyr::group_by(exchange, symbol_original) |>
+  dplyr::arrange(dplyr::desc(completeness_score), .by_group = TRUE) |>
+  dplyr::slice_head(n = 1L) |>
+  dplyr::ungroup() |>
+  dplyr::select(-completeness_score)
+
+universe_df <- universe_clean_stage_3 |>
+  dplyr::mutate(
+    security_type = classify_security_type(company, symbol_original),
+    sector_exchange_clean = standardize_sector(sector_raw),
+    industry_clean = clean_text_na(industry_raw)
+  ) |>
+  dplyr::left_join(
+    sp500_df |>
+      dplyr::select(
+        symbol_yahoo,
+        sp500_symbol_original,
+        sp500_company,
+        sp500_weight,
+        sp500_sector_raw,
+        sp500_sector_clean,
+        sp500_member
+      ),
+    by = "symbol_yahoo"
+  ) |>
+  dplyr::mutate(
+    is_sp500 = tidyr::replace_na(sp500_member, FALSE),
+    benchmark_group = factor(
+      dplyr::if_else(is_sp500, "S&P 500", "Broader Market"),
+      levels = benchmark_levels
+    ),
+    sector_clean = dplyr::coalesce(
+      sector_exchange_clean,
+      sp500_sector_clean
+    ),
+    sector_display = dplyr::coalesce(sector_clean, "Unclassified"),
+    industry_display = dplyr::coalesce(industry_clean, "Unclassified"),
+    symbol_was_normalized =
+      !is.na(symbol_yahoo) & symbol_original != symbol_yahoo
+  ) |>
+  dplyr::select(-sp500_member)
+
+yahoo_symbol_duplicate_table <- universe_df |>
+  dplyr::filter(!is.na(symbol_yahoo)) |>
+  dplyr::count(symbol_yahoo, name = "listing_records") |>
+  dplyr::filter(listing_records > 1L) |>
+  dplyr::arrange(dplyr::desc(listing_records), symbol_yahoo)
+
+sp500_universe_match <- sp500_df |>
+  dplyr::anti_join(
+    universe_df |>
+      dplyr::distinct(symbol_yahoo),
+    by = "symbol_yahoo"
+  )
+
+symbol_normalization_summary <- tibble::tibble(
+  measure = c(
+    "Raw exchange records",
+    "Master-universe records after cleaning",
+    "Original symbols",
+    "Symbols changed for Yahoo compatibility",
+    "Unique Yahoo-compatible symbols",
+    "Yahoo-compatible symbols represented by multiple listing records",
+    "S&P 500 constituent symbols",
+    "S&P 500 constituent symbols matched to the exchange universe",
+    "S&P 500 constituent symbols not matched to the exchange universe"
+  ),
+  value = c(
+    raw_universe_count,
+    nrow(universe_df),
+    dplyr::n_distinct(universe_df$symbol_original, na.rm = TRUE),
+    sum(universe_df$symbol_was_normalized, na.rm = TRUE),
+    dplyr::n_distinct(universe_df$symbol_yahoo, na.rm = TRUE),
+    nrow(yahoo_symbol_duplicate_table),
+    dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE),
+    dplyr::n_distinct(
+      universe_df$symbol_yahoo[universe_df$is_sp500],
+      na.rm = TRUE
+    ),
+    nrow(sp500_universe_match)
+  )
+)
+
+master_data_quality <- tibble::tibble(
+  metric = c(
+    "Total ticker records",
+    "Exact duplicate records removed",
+    "Additional same-exchange/same-symbol records resolved",
+    "Missing market capitalization rate",
+    "Missing sector rate",
+    "Missing industry rate",
+    "Missing exchange last-price rate",
+    "Other or unclassified security-type rate",
+    "S&P 500 exchange-universe match rate"
+  ),
+  value = c(
+    nrow(universe_df),
+    exact_duplicate_count,
+    same_listing_duplicate_count,
+    mean(is.na(universe_df$market_cap_exchange)),
+    mean(is.na(universe_df$sector_clean)),
+    mean(is.na(universe_df$industry_clean)),
+    mean(is.na(universe_df$last_sale_price_exchange)),
+    mean(universe_df$security_type == "Other or Unclassified"),
+    safe_rate(
+      dplyr::n_distinct(
+        universe_df$symbol_yahoo[universe_df$is_sp500],
+        na.rm = TRUE
+      ),
+      dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE)
+    )
+  ),
+  display_value = c(
+    format_count(nrow(universe_df)),
+    format_count(exact_duplicate_count),
+    format_count(same_listing_duplicate_count),
+    format_percent_1(mean(is.na(universe_df$market_cap_exchange))),
+    format_percent_1(mean(is.na(universe_df$sector_clean))),
+    format_percent_1(mean(is.na(universe_df$industry_clean))),
+    format_percent_1(mean(is.na(universe_df$last_sale_price_exchange))),
+    format_percent_1(mean(universe_df$security_type == "Other or Unclassified")),
+    format_percent_1(
+      safe_rate(
+        dplyr::n_distinct(
+          universe_df$symbol_yahoo[universe_df$is_sp500],
+          na.rm = TRUE
+        ),
+        dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE)
+      )
+    )
+  )
+)
+```
+
+```{r}
+#| label: master-quality-tables
+#| results: asis
+
+show_table(invalid_entry_log, "Invalid exchange-directory records")
+show_table(symbol_normalization_summary, "Symbol normalization and S&P 500 matching")
+show_table(
+  master_data_quality |>
+    dplyr::select(metric, display_value),
+  "Master-universe data quality"
+)
+
+if (nrow(same_listing_duplicate_table) > 0L) {
+  show_table(
+    utils::head(same_listing_duplicate_table, 20L),
+    "Same-exchange/same-symbol records resolved using metadata completeness (first 20)"
+  )
+}
+
+if (nrow(sp500_universe_match) > 0L) {
+  show_table(
+    sp500_universe_match |>
+      dplyr::select(
+        symbol_yahoo,
+        sp500_company,
+        sp500_sector_clean,
+        sp500_weight
+      ),
+    "S&P 500 constituents not matched to the exchange directory"
+  )
+}
+```
+
+The symbol-normalization rules preserve `symbol_original` and create a separate `symbol_yahoo`. Periods and slashes used for share classes are converted to dashes, and common preferred-share notations are translated to Yahoo-compatible forms. The master table retains exchange records; unmatched S&P 500 constituents are added only to the downstream download-candidate table so benchmark download coverage can be diagnosed without altering Module 1 listing counts.
+
+## Operating-company candidates and market-data retrieval
+
+### Candidate selection
+
+```{r}
+#| label: build-download-candidates
+
+exchange_equity_candidates_all <- universe_df |>
+  dplyr::filter(
+    security_type %in% c("Common Equity", "ADR"),
+    !is.na(symbol_yahoo)
+  ) |>
+  dplyr::mutate(
+    source_record = "Exchange directory",
+    exchange_priority = dplyr::case_when(
+      exchange == "NYSE" ~ 1L,
+      exchange == "NASDAQ" ~ 2L,
+      exchange == "AMEX" ~ 3L,
+      TRUE ~ 9L
+    )
+  )
+
+candidate_yahoo_duplicate_table <- exchange_equity_candidates_all |>
+  dplyr::count(symbol_yahoo, name = "candidate_records") |>
+  dplyr::filter(candidate_records > 1L) |>
+  dplyr::arrange(dplyr::desc(candidate_records), symbol_yahoo)
+
+exchange_equity_candidates <- exchange_equity_candidates_all |>
+  dplyr::arrange(
+    symbol_yahoo,
+    dplyr::desc(is_sp500),
+    dplyr::desc(!is.na(market_cap_exchange)),
+    dplyr::desc(!is.na(sector_clean)),
+    dplyr::desc(!is.na(industry_clean)),
+    exchange_priority
+  ) |>
+  dplyr::group_by(symbol_yahoo) |>
+  dplyr::slice_head(n = 1L) |>
+  dplyr::ungroup() |>
+  dplyr::select(-exchange_priority)
+
+sp500_candidate_supplement <- sp500_df |>
+  dplyr::anti_join(
+    exchange_equity_candidates |>
+      dplyr::distinct(symbol_yahoo),
+    by = "symbol_yahoo"
+  ) |>
+  dplyr::transmute(
+    symbol_original = sp500_symbol_original,
+    company = dplyr::coalesce(sp500_company, sp500_symbol_original),
+    exchange = NA_character_,
+    last_sale_price_exchange = NA_real_,
+    market_cap_exchange = NA_real_,
+    country = NA_character_,
+    ipo_year = NA_integer_,
+    sector_raw = sp500_sector_raw,
+    industry_raw = NA_character_,
+    symbol_yahoo = symbol_yahoo,
+    security_type = "Common Equity",
+    sector_exchange_clean = NA_character_,
+    industry_clean = NA_character_,
+    sp500_symbol_original = sp500_symbol_original,
+    sp500_company = sp500_company,
+    sp500_weight = sp500_weight,
+    sp500_sector_raw = sp500_sector_raw,
+    sp500_sector_clean = sp500_sector_clean,
+    is_sp500 = TRUE,
+    benchmark_group = factor("S&P 500", levels = benchmark_levels),
+    sector_clean = sp500_sector_clean,
+    sector_display = dplyr::coalesce(sp500_sector_clean, "Unclassified"),
+    industry_display = "Unclassified",
+    symbol_was_normalized =
+      !is.na(symbol_yahoo) & sp500_symbol_original != symbol_yahoo,
+    source_record = "S&P 500 supplement"
+  )
+
+equity_candidates_df <- dplyr::bind_rows(
+  exchange_equity_candidates,
+  sp500_candidate_supplement
+) |>
+  dplyr::arrange(symbol_yahoo, dplyr::desc(is_sp500)) |>
+  dplyr::distinct(symbol_yahoo, .keep_all = TRUE) |>
+  dplyr::mutate(
+    benchmark_group = factor(benchmark_group, levels = benchmark_levels)
+  )
+
+download_symbols <- equity_candidates_df |>
+  dplyr::filter(!is.na(symbol_yahoo)) |>
+  dplyr::pull(symbol_yahoo) |>
+  unique() |>
+  sort()
+
+download_symbol_hash <- symbol_signature(download_symbols)
+
+candidate_summary <- tibble::tibble(
+  measure = c(
+    "Common-equity and ADR exchange records",
+    "Duplicate Yahoo symbols resolved for download",
+    "Unique exchange-derived download candidates",
+    "Unmatched S&P 500 symbols supplemented for download diagnosis",
+    "Total unique Yahoo symbols requested"
+  ),
+  value = c(
+    nrow(exchange_equity_candidates_all),
+    sum(pmax(candidate_yahoo_duplicate_table$candidate_records - 1L, 0L)),
+    nrow(exchange_equity_candidates),
+    nrow(sp500_candidate_supplement),
+    length(download_symbols)
+  )
+)
+```
+
+```{r}
+#| label: candidate-summary-table
+#| results: asis
+
+show_table(candidate_summary, "Operating-company download candidates")
+
+if (nrow(candidate_yahoo_duplicate_table) > 0L) {
+  show_table(
+    utils::head(candidate_yahoo_duplicate_table, 20L),
+    "Yahoo-compatible candidate symbols represented by multiple exchange records (first 20)"
+  )
+}
+```
+
+### Snapshot quote data
+
+```{r}
+#| label: quote-retrieval-functions
+
+quote_fields <- c(
+  "regularMarketPrice",
+  "marketCap",
+  "trailingPE",
+  "priceToBook",
+  "averageDailyVolume3Month",
+  "averageDailyVolume10Day"
+)
+
+empty_condition_log <- function() {
+  tibble::tibble(
+    stage = character(),
+    batch_id = character(),
+    symbol_yahoo = character(),
+    status = character(),
+    message = character()
+  )
+}
+
+empty_quote_rows <- function(symbols) {
+  tibble::tibble(
+    symbol_yahoo = symbols,
+    quote_trade_time = NA_character_,
+    quote_price = NA_real_,
+    market_cap_quote = NA_real_,
+    trailing_pe = NA_real_,
+    price_to_book = NA_real_,
+    average_daily_volume_3m_quote = NA_real_,
+    average_daily_volume_10d_quote = NA_real_,
+    quote_success = FALSE
+  )
+}
+
+fetch_quote_batch_once <- function(symbols) {
+  raw_quotes <- quantmod::getQuote(
+    Symbols = symbols,
+    src = "yahoo",
+    what = quote_fields
+  )
+
+  if (!is.data.frame(raw_quotes) || nrow(raw_quotes) == 0L) {
+    stop("Yahoo returned no quote rows for this batch.", call. = FALSE)
+  }
+
+  quote_data <- raw_quotes |>
+    as.data.frame(stringsAsFactors = FALSE, check.names = FALSE) |>
+    tibble::rownames_to_column("symbol_yahoo")
+
+  names(quote_data) <- snake_names(names(quote_data))
+  quote_data <- ensure_columns(
+    quote_data,
+    c(
+      "symbol_yahoo",
+      "regular_market_time",
+      "regular_market_price",
+      "market_cap",
+      "trailing_pe",
+      "price_to_book",
+      "average_daily_volume3_month",
+      "average_daily_volume10_day"
+    )
+  )
+
+  quote_data <- quote_data |>
+    dplyr::transmute(
+      symbol_yahoo = normalize_yahoo_symbol(symbol_yahoo),
+      quote_trade_time = as.character(regular_market_time),
+      quote_price = positive_or_na(regular_market_price),
+      market_cap_quote = positive_or_na(market_cap),
+      trailing_pe = safe_numeric(trailing_pe),
+      price_to_book = safe_numeric(price_to_book),
+      average_daily_volume_3m_quote = positive_or_na(average_daily_volume3_month),
+      average_daily_volume_10d_quote = positive_or_na(average_daily_volume10_day)
+    ) |>
+    dplyr::distinct(symbol_yahoo, .keep_all = TRUE) |>
+    dplyr::mutate(
+      quote_success = dplyr::if_any(
+        c(
+          quote_price,
+          market_cap_quote,
+          trailing_pe,
+          price_to_book,
+          average_daily_volume_3m_quote,
+          average_daily_volume_10d_quote
+        ),
+        ~ is.finite(.x)
+      )
+    )
+
+  tibble::tibble(symbol_yahoo = symbols) |>
+    dplyr::left_join(quote_data, by = "symbol_yahoo") |>
+    dplyr::mutate(quote_success = tidyr::replace_na(quote_success, FALSE))
+}
+
+condition_log_rows <- function(attempt, stage, batch_id, symbols) {
+  warning_rows <- if (length(attempt$warnings) > 0L) {
+    tibble::tibble(
+      stage = stage,
+      batch_id = batch_id,
+      symbol_yahoo = NA_character_,
+      status = "warning",
+      message = attempt$warnings
+    )
+  } else {
+    tibble::tibble()
+  }
+
+  error_rows <- if (length(attempt$errors) > 0L) {
+    tibble::tibble(
+      stage = stage,
+      batch_id = batch_id,
+      symbol_yahoo = if (length(symbols) == 1L) symbols else NA_character_,
+      status = "error",
+      message = attempt$errors
+    )
+  } else {
+    tibble::tibble()
+  }
+
+  dplyr::bind_rows(warning_rows, error_rows)
+}
+
+is_global_download_error <- function(messages) {
+  messages <- unique(stats::na.omit(messages))
+  if (length(messages) == 0L) {
+    return(FALSE)
+  }
+
+  message_text <- stringr::str_to_lower(paste(messages, collapse = " | "))
+
+  stringr::str_detect(
+    message_text,
+    paste0(
+      "crumb|consent|could not resolve|failed to connect|connection refused|",
+      "cannot open.*url|cannot open the connection|download failed|",
+      "timed out|timeout|ssl|rate limit|too many requests|",
+      "http[^0-9]*(401|403|429|500|502|503|504)|service unavailable"
+    )
+  )
+}
+
+fetch_quote_resilient <- function(symbols, batch_id, depth = 0L) {
+  attempt <- retry_captured(
+    function() fetch_quote_batch_once(symbols),
+    attempts = max_retry_attempts
+  )
+
+  attempt_log <- condition_log_rows(
+    attempt,
+    stage = "snapshot_quote",
+    batch_id = batch_id,
+    symbols = symbols
+  )
+
+  if (isTRUE(attempt$ok)) {
+    quote_data <- attempt$value
+    global_failure <-
+      !any(quote_data$quote_success, na.rm = TRUE) &&
+      is_global_download_error(attempt$warnings)
+
+    no_data_log <- quote_data |>
+      dplyr::filter(!quote_success) |>
+      dplyr::transmute(
+        stage = "snapshot_quote",
+        batch_id = batch_id,
+        symbol_yahoo = symbol_yahoo,
+        status = dplyr::if_else(
+          global_failure,
+          "global_failure",
+          "no_data"
+        ),
+        message = dplyr::if_else(
+          global_failure,
+          "The provider returned no usable quote data and emitted a global connection or authorization warning.",
+          "No requested quote field was returned."
+        )
+      )
+
+    return(list(
+      data = quote_data,
+      log = dplyr::bind_rows(attempt_log, no_data_log),
+      global_failure = global_failure
+    ))
+  }
+
+  global_failure <- is_global_download_error(c(attempt$errors, attempt$warnings))
+  may_split <-
+    !global_failure &&
+    length(symbols) > 1L &&
+    depth < max_recursive_split_depth
+
+  if (may_split) {
+    split_point <- ceiling(length(symbols) / 2L)
+    left_symbols <- symbols[seq_len(split_point)]
+    right_symbols <- symbols[-seq_len(split_point)]
+
+    left_result <- fetch_quote_resilient(
+      left_symbols,
+      paste0(batch_id, "L"),
+      depth = depth + 1L
+    )
+    right_result <- fetch_quote_resilient(
+      right_symbols,
+      paste0(batch_id, "R"),
+      depth = depth + 1L
+    )
+
+    return(list(
+      data = dplyr::bind_rows(left_result$data, right_result$data),
+      log = dplyr::bind_rows(
+        attempt_log,
+        left_result$log,
+        right_result$log
+      ),
+      global_failure = isTRUE(left_result$global_failure) &&
+        isTRUE(right_result$global_failure)
+    ))
+  }
+
+  failure_message <- paste(
+    unique(c(attempt$errors, attempt$warnings)),
+    collapse = " | "
+  )
+  if (identical(failure_message, "")) {
+    failure_message <- "The quote batch failed without an error message."
+  }
+
+  list(
+    data = empty_quote_rows(symbols),
+    log = dplyr::bind_rows(
+      attempt_log,
+      tibble::tibble(
+        stage = "snapshot_quote",
+        batch_id = batch_id,
+        symbol_yahoo = symbols,
+        status = if (global_failure) "global_failure" else "failed_batch",
+        message = failure_message
+      )
+    ),
+    global_failure = global_failure
+  )
+}
+
+fetch_all_quotes <- function(symbols) {
+  effective_batch_size <- min(
+    as.integer(quote_batch_size),
+    as.integer(provider_quote_limit)
+  )
+  batches <- split_vector(symbols, effective_batch_size)
+  results <- vector("list", length(batches))
+
+  if (length(batches) == 0L) {
+    return(list(
+      data = empty_quote_rows(character()),
+      log = empty_condition_log(),
+      requested_symbols = symbols,
+      effective_batch_size = effective_batch_size,
+      fetched_at = Sys.time()
+    ))
+  }
+
+  for (batch_number in seq_along(batches)) {
+    message(
+      "Retrieving quote batch ",
+      batch_number,
+      " of ",
+      length(batches),
+      "."
+    )
+
+    results[[batch_number]] <- fetch_quote_resilient(
+      batches[[batch_number]],
+      sprintf("Q%04d", batch_number)
+    )
+
+    if (isTRUE(results[[batch_number]]$global_failure)) {
+      remaining_batches <- if (batch_number < length(batches)) {
+        seq.int(batch_number + 1L, length(batches))
+      } else {
+        integer()
+      }
+
+      for (remaining_number in remaining_batches) {
+        skipped_symbols <- batches[[remaining_number]]
+        results[[remaining_number]] <- list(
+          data = empty_quote_rows(skipped_symbols),
+          log = tibble::tibble(
+            stage = "snapshot_quote",
+            batch_id = sprintf("Q%04d", remaining_number),
+            symbol_yahoo = skipped_symbols,
+            status = "skipped_after_global_failure",
+            message = "Skipped after a provider-wide quote failure was detected."
+          ),
+          global_failure = TRUE
+        )
+      }
+      break
+    }
+
+    if (batch_number < length(batches)) {
+      Sys.sleep(pause_between_batches_seconds)
+    }
+  }
+
+  quote_data <- purrr::map_dfr(results, "data") |>
+    dplyr::arrange(symbol_yahoo) |>
+    dplyr::distinct(symbol_yahoo, .keep_all = TRUE)
+
+  quote_data <- tibble::tibble(symbol_yahoo = symbols) |>
+    dplyr::left_join(quote_data, by = "symbol_yahoo") |>
+    dplyr::mutate(quote_success = tidyr::replace_na(quote_success, FALSE))
+
+  list(
+    data = quote_data,
+    log = purrr::map_dfr(results, "log"),
+    requested_symbols = symbols,
+    effective_batch_size = effective_batch_size,
+    fetched_at = Sys.time()
+  )
+}
+
+quote_cache <- cache_get(
+  cache_stem = paste0(
+    "quote_snapshot_",
+    analysis_date,
+    "_",
+    download_symbol_hash
+  ),
+  fetch_function = function() fetch_all_quotes(download_symbols),
+  validator = function(x) {
+    required_quote_columns <- c(
+      "symbol_yahoo",
+      "quote_trade_time",
+      "quote_price",
+      "market_cap_quote",
+      "trailing_pe",
+      "price_to_book",
+      "average_daily_volume_3m_quote",
+      "average_daily_volume_10d_quote",
+      "quote_success"
+    )
+
+    is.list(x) &&
+      all(
+        c("data", "log", "requested_symbols", "effective_batch_size") %in%
+          names(x)
+      ) &&
+      is.data.frame(x$data) &&
+      is.data.frame(x$log) &&
+      all(required_quote_columns %in% names(x$data)) &&
+      (
+        length(x$requested_symbols) == 0L ||
+          any(x$data$quote_success, na.rm = TRUE)
+      )
+  },
+  fallback_prefix = NULL,
+  fetch_attempts = 1L,
+  return_invalid_fetch = TRUE
+)
+
+if (is.null(quote_cache$value)) {
+  quote_fetch_result <- list(
+    data = empty_quote_rows(download_symbols),
+    log = tibble::tibble(
+      stage = "snapshot_quote",
+      batch_id = NA_character_,
+      symbol_yahoo = download_symbols,
+      status = "failed_symbol",
+      message = "The quote retrieval workflow returned no result."
+    ),
+    requested_symbols = download_symbols,
+    effective_batch_size = min(quote_batch_size, provider_quote_limit),
+    fetched_at = Sys.time()
+  )
+} else {
+  quote_fetch_result <- quote_cache$value
+}
+
+quote_df <- quote_fetch_result$data
+quote_log <- dplyr::bind_rows(empty_condition_log(), quote_fetch_result$log)
+
+quote_retrieval_summary <- tibble::tibble(
+  measure = c(
+    "Requested symbols",
+    "Symbols with at least one requested quote field",
+    "Symbols with no requested quote field",
+    "Quote success rate",
+    "Quote log rows",
+    "Effective quote batch size"
+  ),
+  value = c(
+    length(download_symbols),
+    sum(quote_df$quote_success, na.rm = TRUE),
+    sum(!quote_df$quote_success, na.rm = TRUE),
+    safe_rate(sum(quote_df$quote_success, na.rm = TRUE), length(download_symbols)),
+    nrow(quote_log),
+    quote_fetch_result$effective_batch_size
+  ),
+  display_value = c(
+    format_count(length(download_symbols)),
+    format_count(sum(quote_df$quote_success, na.rm = TRUE)),
+    format_count(sum(!quote_df$quote_success, na.rm = TRUE)),
+    format_percent_1(
+      safe_rate(sum(quote_df$quote_success, na.rm = TRUE), length(download_symbols))
+    ),
+    format_count(nrow(quote_log)),
+    format_count(quote_fetch_result$effective_batch_size)
+  )
+)
+```
+
+### Historical prices and 30-day liquidity
+
+```{r}
+#| label: price-retrieval-functions
+
+empty_price_data <- function() {
+  tibble::tibble(
+    symbol_yahoo = character(),
+    date = as.Date(character()),
+    open = numeric(),
+    high = numeric(),
+    low = numeric(),
+    close = numeric(),
+    volume = numeric(),
+    adjusted = numeric()
+  )
+}
+
+fetch_price_batch_once <- function(symbols) {
+  raw_prices <- tidyquant::tq_get(
+    x = symbols,
+    get = "stock.prices",
+    from = price_from_date,
+    to = price_to_date,
+    complete_cases = FALSE
+  )
+
+  if (!is.data.frame(raw_prices)) {
+    stop("Yahoo returned an invalid historical-price object.", call. = FALSE)
+  }
+
+  names(raw_prices) <- snake_names(names(raw_prices))
+
+  if (!("symbol" %in% names(raw_prices))) {
+    if (length(symbols) == 1L && nrow(raw_prices) > 0L) {
+      raw_prices$symbol <- symbols[[1]]
+    } else if (nrow(raw_prices) > 0L) {
+      stop(
+        "Historical prices for a multi-symbol batch did not include a symbol column.",
+        call. = FALSE
+      )
+    }
+  }
+
+  raw_prices <- ensure_columns(
+    raw_prices,
+    c("symbol", "date", "open", "high", "low", "close", "volume", "adjusted")
+  )
+
+  raw_prices |>
+    dplyr::transmute(
+      symbol_yahoo = normalize_yahoo_symbol(symbol),
+      date = as.Date(date),
+      open = safe_numeric(open),
+      high = safe_numeric(high),
+      low = safe_numeric(low),
+      close = safe_numeric(close),
+      volume = safe_numeric(volume),
+      adjusted = safe_numeric(adjusted)
+    ) |>
+    dplyr::filter(!is.na(symbol_yahoo), !is.na(date)) |>
+    dplyr::distinct(symbol_yahoo, date, .keep_all = TRUE)
+}
+
+fetch_price_resilient <- function(symbols, batch_id, depth = 0L) {
+  attempt <- retry_captured(
+    function() fetch_price_batch_once(symbols),
+    attempts = max_retry_attempts
+  )
+
+  attempt_log <- condition_log_rows(
+    attempt,
+    stage = "historical_price",
+    batch_id = batch_id,
+    symbols = symbols
+  )
+
+  if (isTRUE(attempt$ok)) {
+    price_data <- attempt$value
+    successful_symbols <- price_data |>
+      dplyr::filter(
+        !is.na(date),
+        is.finite(close),
+        close > 0,
+        is.finite(volume),
+        volume >= 0
+      ) |>
+      dplyr::distinct(symbol_yahoo) |>
+      dplyr::pull(symbol_yahoo)
+
+    missing_symbols <- setdiff(symbols, successful_symbols)
+    global_failure <-
+      length(successful_symbols) == 0L &&
+      is_global_download_error(attempt$warnings)
+
+    no_data_log <- if (length(missing_symbols) > 0L) {
+      tibble::tibble(
+        stage = "historical_price",
+        batch_id = batch_id,
+        symbol_yahoo = missing_symbols,
+        status = if (global_failure) "global_failure" else "no_data",
+        message = if (global_failure) {
+          "The provider returned no usable price data and emitted a global connection or authorization warning."
+        } else {
+          "No valid close-and-volume observation was returned."
+        }
+      )
+    } else {
+      tibble::tibble()
+    }
+
+    return(list(
+      data = price_data,
+      log = dplyr::bind_rows(attempt_log, no_data_log),
+      global_failure = global_failure
+    ))
+  }
+
+  global_failure <- is_global_download_error(c(attempt$errors, attempt$warnings))
+  may_split <-
+    !global_failure &&
+    length(symbols) > 1L &&
+    depth < max_recursive_split_depth
+
+  if (may_split) {
+    split_point <- ceiling(length(symbols) / 2L)
+    left_symbols <- symbols[seq_len(split_point)]
+    right_symbols <- symbols[-seq_len(split_point)]
+
+    left_result <- fetch_price_resilient(
+      left_symbols,
+      paste0(batch_id, "L"),
+      depth = depth + 1L
+    )
+    right_result <- fetch_price_resilient(
+      right_symbols,
+      paste0(batch_id, "R"),
+      depth = depth + 1L
+    )
+
+    return(list(
+      data = dplyr::bind_rows(left_result$data, right_result$data),
+      log = dplyr::bind_rows(
+        attempt_log,
+        left_result$log,
+        right_result$log
+      ),
+      global_failure = isTRUE(left_result$global_failure) &&
+        isTRUE(right_result$global_failure)
+    ))
+  }
+
+  failure_message <- paste(
+    unique(c(attempt$errors, attempt$warnings)),
+    collapse = " | "
+  )
+  if (identical(failure_message, "")) {
+    failure_message <- "The historical-price batch failed without an error message."
+  }
+
+  list(
+    data = empty_price_data(),
+    log = dplyr::bind_rows(
+      attempt_log,
+      tibble::tibble(
+        stage = "historical_price",
+        batch_id = batch_id,
+        symbol_yahoo = symbols,
+        status = if (global_failure) "global_failure" else "failed_batch",
+        message = failure_message
+      )
+    ),
+    global_failure = global_failure
+  )
+}
+
+fetch_all_prices <- function(symbols) {
+  batches <- split_vector(symbols, price_batch_size)
+  results <- vector("list", length(batches))
+
+  if (length(batches) == 0L) {
+    return(list(
+      data = empty_price_data(),
+      log = empty_condition_log(),
+      requested_symbols = symbols,
+      effective_batch_size = price_batch_size,
+      from = price_from_date,
+      to = price_to_date,
+      fetched_at = Sys.time()
+    ))
+  }
+
+  for (batch_number in seq_along(batches)) {
+    message(
+      "Retrieving historical-price batch ",
+      batch_number,
+      " of ",
+      length(batches),
+      "."
+    )
+
+    results[[batch_number]] <- fetch_price_resilient(
+      batches[[batch_number]],
+      sprintf("P%04d", batch_number)
+    )
+
+    if (isTRUE(results[[batch_number]]$global_failure)) {
+      remaining_batches <- if (batch_number < length(batches)) {
+        seq.int(batch_number + 1L, length(batches))
+      } else {
+        integer()
+      }
+
+      for (remaining_number in remaining_batches) {
+        skipped_symbols <- batches[[remaining_number]]
+        results[[remaining_number]] <- list(
+          data = empty_price_data(),
+          log = tibble::tibble(
+            stage = "historical_price",
+            batch_id = sprintf("P%04d", remaining_number),
+            symbol_yahoo = skipped_symbols,
+            status = "skipped_after_global_failure",
+            message = "Skipped after a provider-wide historical-price failure was detected."
+          ),
+          global_failure = TRUE
+        )
+      }
+      break
+    }
+
+    if (batch_number < length(batches)) {
+      Sys.sleep(pause_between_batches_seconds)
+    }
+  }
+
+  price_data <- purrr::map_dfr(results, "data") |>
+    dplyr::distinct(symbol_yahoo, date, .keep_all = TRUE) |>
+    dplyr::arrange(symbol_yahoo, date)
+
+  list(
+    data = price_data,
+    log = purrr::map_dfr(results, "log"),
+    requested_symbols = symbols,
+    effective_batch_size = price_batch_size,
+    from = price_from_date,
+    to = price_to_date,
+    fetched_at = Sys.time()
+  )
+}
+
+price_cache <- cache_get(
+  cache_stem = paste0(
+    "price_history_",
+    price_from_date,
+    "_",
+    analysis_date,
+    "_",
+    download_symbol_hash
+  ),
+  fetch_function = function() fetch_all_prices(download_symbols),
+  validator = function(x) {
+    required_price_columns <- c(
+      "symbol_yahoo",
+      "date",
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume",
+      "adjusted"
+    )
+
+    is.list(x) &&
+      all(c("data", "log", "requested_symbols") %in% names(x)) &&
+      is.data.frame(x$data) &&
+      is.data.frame(x$log) &&
+      all(required_price_columns %in% names(x$data)) &&
+      (
+        length(x$requested_symbols) == 0L ||
+          any(
+            is.finite(x$data$close) &
+              x$data$close > 0 &
+              is.finite(x$data$volume) &
+              x$data$volume >= 0,
+            na.rm = TRUE
+          )
+      )
+  },
+  fallback_prefix = NULL,
+  fetch_attempts = 1L,
+  return_invalid_fetch = TRUE
+)
+
+if (is.null(price_cache$value)) {
+  price_fetch_result <- list(
+    data = empty_price_data(),
+    log = tibble::tibble(
+      stage = "historical_price",
+      batch_id = NA_character_,
+      symbol_yahoo = download_symbols,
+      status = "failed_symbol",
+      message = "The historical-price retrieval workflow returned no result."
+    ),
+    requested_symbols = download_symbols,
+    effective_batch_size = price_batch_size,
+    from = price_from_date,
+    to = price_to_date,
+    fetched_at = Sys.time()
+  )
+} else {
+  price_fetch_result <- price_cache$value
+}
+
+price_history_df <- price_fetch_result$data
+price_log <- dplyr::bind_rows(empty_condition_log(), price_fetch_result$log)
+
+valid_price_history_df <- price_history_df |>
+  dplyr::filter(
+    date <= analysis_date,
+    is.finite(close),
+    close > 0,
+    is.finite(volume),
+    volume >= 0
+  ) |>
+  dplyr::distinct(symbol_yahoo, date, .keep_all = TRUE)
+
+liquidity_df <- valid_price_history_df |>
+  dplyr::group_by(symbol_yahoo) |>
+  dplyr::arrange(dplyr::desc(date), .by_group = TRUE) |>
+  dplyr::slice_head(n = liquidity_trading_days) |>
+  dplyr::summarise(
+    valid_trading_days = dplyr::n(),
+    latest_history_date = dplyr::first(date),
+    earliest_history_date_used = dplyr::last(date),
+    latest_close = dplyr::first(close),
+    avg_daily_share_volume_raw = mean(volume, na.rm = TRUE),
+    avg_daily_dollar_volume_raw = mean(close * volume, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  dplyr::mutate(
+    historical_data_available = valid_trading_days > 0L,
+    liquidity_history_adequate =
+      valid_trading_days >= minimum_valid_trading_days,
+    avg_daily_share_volume_30d = dplyr::if_else(
+      liquidity_history_adequate,
+      avg_daily_share_volume_raw,
+      NA_real_
+    ),
+    avg_daily_dollar_volume_30d = dplyr::if_else(
+      liquidity_history_adequate,
+      avg_daily_dollar_volume_raw,
+      NA_real_
+    )
+  )
+
+price_symbol_coverage <- tibble::tibble(symbol_yahoo = download_symbols) |>
+  dplyr::left_join(
+    liquidity_df |>
+      dplyr::select(
+        symbol_yahoo,
+        valid_trading_days,
+        historical_data_available,
+        liquidity_history_adequate
+      ),
+    by = "symbol_yahoo"
+  ) |>
+  dplyr::mutate(
+    valid_trading_days = tidyr::replace_na(valid_trading_days, 0L),
+    historical_data_available =
+      tidyr::replace_na(historical_data_available, FALSE),
+    liquidity_history_adequate =
+      tidyr::replace_na(liquidity_history_adequate, FALSE)
+  )
+
+price_retrieval_summary <- tibble::tibble(
+  measure = c(
+    "Requested symbols",
+    "Symbols with at least one valid close-and-volume observation",
+    "Symbols with adequate liquidity history",
+    "Symbols with insufficient or unavailable liquidity history",
+    "Historical-price success rate",
+    "Median valid trading observations among retrieved symbols",
+    "Historical-price log rows"
+  ),
+  value = c(
+    length(download_symbols),
+    sum(price_symbol_coverage$historical_data_available),
+    sum(price_symbol_coverage$liquidity_history_adequate),
+    sum(!price_symbol_coverage$liquidity_history_adequate),
+    safe_rate(
+      sum(price_symbol_coverage$historical_data_available),
+      length(download_symbols)
+    ),
+    safe_median(
+      price_symbol_coverage$valid_trading_days[
+        price_symbol_coverage$historical_data_available
+      ]
+    ),
+    nrow(price_log)
+  ),
+  display_value = c(
+    format_count(length(download_symbols)),
+    format_count(sum(price_symbol_coverage$historical_data_available)),
+    format_count(sum(price_symbol_coverage$liquidity_history_adequate)),
+    format_count(sum(!price_symbol_coverage$liquidity_history_adequate)),
+    format_percent_1(
+      safe_rate(
+        sum(price_symbol_coverage$historical_data_available),
+        length(download_symbols)
+      )
+    ),
+    format_count(
+      safe_median(
+        price_symbol_coverage$valid_trading_days[
+          price_symbol_coverage$historical_data_available
+        ]
+      )
+    ),
+    format_count(nrow(price_log))
+  )
+)
+```
+
+```{r}
+#| label: retrieval-summary-tables
+#| results: asis
+
+market_data_cache_manifest <- dplyr::bind_rows(
+  quote_cache$meta,
+  price_cache$meta
+)
+
+show_table(
+  market_data_cache_manifest,
+  "Cache and retrieval manifest for quote and historical-price data"
+)
+show_table(
+  quote_retrieval_summary |>
+    dplyr::select(measure, display_value),
+  "Snapshot-quote retrieval summary"
+)
+show_table(
+  price_retrieval_summary |>
+    dplyr::select(measure, display_value),
+  "Historical-price and liquidity retrieval summary"
+)
+
+quote_log_summary <- quote_log |>
+  dplyr::count(status, name = "log_rows") |>
+  dplyr::arrange(dplyr::desc(log_rows))
+price_log_summary <- price_log |>
+  dplyr::count(status, name = "log_rows") |>
+  dplyr::arrange(dplyr::desc(log_rows))
+
+show_table(quote_log_summary, "Snapshot-quote log by status")
+show_table(price_log_summary, "Historical-price log by status")
+```
+
+### Final operating-company equity universe
+
+```{r}
+#| label: build-final-equity-universe
+
+analysis_enriched_df <- equity_candidates_df |>
+  dplyr::left_join(quote_df, by = "symbol_yahoo") |>
+  dplyr::left_join(liquidity_df, by = "symbol_yahoo") |>
+  dplyr::mutate(
+    quote_success = tidyr::replace_na(quote_success, FALSE),
+    historical_data_available =
+      tidyr::replace_na(historical_data_available, FALSE),
+    liquidity_history_adequate =
+      tidyr::replace_na(liquidity_history_adequate, FALSE),
+    valid_yahoo_data = quote_success | historical_data_available,
+    market_cap = dplyr::case_when(
+      is.finite(market_cap_exchange) & market_cap_exchange > 0 ~
+        market_cap_exchange,
+      is.finite(market_cap_quote) & market_cap_quote > 0 ~
+        market_cap_quote,
+      TRUE ~ NA_real_
+    ),
+    market_cap_source = dplyr::case_when(
+      is.finite(market_cap_exchange) & market_cap_exchange > 0 ~
+        "Exchange directory",
+      is.finite(market_cap_quote) & market_cap_quote > 0 ~
+        "Yahoo quote fallback",
+      TRUE ~ "Unavailable"
+    ),
+    reference_price = dplyr::case_when(
+      is.finite(quote_price) & quote_price > 0 ~ quote_price,
+      is.finite(latest_close) & latest_close > 0 ~ latest_close,
+      is.finite(last_sale_price_exchange) & last_sale_price_exchange > 0 ~
+        last_sale_price_exchange,
+      TRUE ~ NA_real_
+    ),
+    price_source = dplyr::case_when(
+      is.finite(quote_price) & quote_price > 0 ~ "Yahoo snapshot quote",
+      is.finite(latest_close) & latest_close > 0 ~ "Yahoo historical close",
+      is.finite(last_sale_price_exchange) & last_sale_price_exchange > 0 ~
+        "Exchange directory",
+      TRUE ~ "Unavailable"
+    ),
+    trailing_pe = dplyr::if_else(
+      is.finite(trailing_pe),
+      trailing_pe,
+      NA_real_
+    ),
+    price_to_book = dplyr::if_else(
+      is.finite(price_to_book),
+      price_to_book,
+      NA_real_
+    ),
+    operating_margin = NA_real_,
+    benchmark_group = factor(
+      dplyr::if_else(is_sp500, "S&P 500", "Broader Market"),
+      levels = benchmark_levels
+    )
+  )
+
+apply_equity_filters <- function(data) {
+  current <- data
+  log_rows <- list(
+    tibble::tibble(
+      step = "Unique Common Equity/ADR candidate symbols",
+      starting_observations = nrow(current),
+      removed_at_step = 0L,
+      remaining_observations = nrow(current),
+      removal_rate_from_previous = 0
+    )
+  )
+
+  filter_steps <- list(
+    list(
+      label = "Require valid Yahoo quote or historical-price data",
+      keep = function(x) x$valid_yahoo_data
+    ),
+    list(
+      label = "Require positive market capitalization",
+      keep = function(x) is.finite(x$market_cap) & x$market_cap > 0
+    ),
+    list(
+      label = "Require positive reference price",
+      keep = function(x) is.finite(x$reference_price) & x$reference_price > 0
+    ),
+    list(
+      label = "Require populated standardized sector",
+      keep = function(x) !is.na(x$sector_clean)
+    ),
+    list(
+      label = "Require populated industry classification",
+      keep = function(x) !is.na(x$industry_clean)
+    )
+  )
+
+  for (step_index in seq_along(filter_steps)) {
+    step <- filter_steps[[step_index]]
+    starting_count <- nrow(current)
+    keep_vector <- step$keep(current)
+    keep_vector[is.na(keep_vector)] <- FALSE
+    next_data <- current[keep_vector, , drop = FALSE]
+    remaining_count <- nrow(next_data)
+    removed_count <- starting_count - remaining_count
+
+    log_rows[[length(log_rows) + 1L]] <- tibble::tibble(
+      step = step$label,
+      starting_observations = starting_count,
+      removed_at_step = removed_count,
+      remaining_observations = remaining_count,
+      removal_rate_from_previous = safe_rate(
+        removed_count,
+        starting_count
+      )
+    )
+
+    current <- next_data
+  }
+
+  list(
+    data = current,
+    log = dplyr::bind_rows(log_rows)
+  )
+}
+
+post_retrieval_data_quality <- tibble::tibble(
+  metric = c(
+    "Unique download-candidate symbols",
+    "Duplicate Yahoo-compatible symbol rate",
+    "Valid Yahoo-data rate",
+    "Missing positive market-capitalization rate",
+    "Missing positive reference-price rate",
+    "Missing standardized-sector rate",
+    "Missing industry-classification rate",
+    "S&P 500 candidate valid Yahoo-data rate"
+  ),
+  value = c(
+    nrow(analysis_enriched_df),
+    safe_rate(
+      nrow(analysis_enriched_df) -
+        dplyr::n_distinct(analysis_enriched_df$symbol_yahoo, na.rm = TRUE),
+      nrow(analysis_enriched_df)
+    ),
+    safe_rate(
+      sum(analysis_enriched_df$valid_yahoo_data, na.rm = TRUE),
+      nrow(analysis_enriched_df)
+    ),
+    mean(
+      !(is.finite(analysis_enriched_df$market_cap) &
+          analysis_enriched_df$market_cap > 0)
+    ),
+    mean(
+      !(is.finite(analysis_enriched_df$reference_price) &
+          analysis_enriched_df$reference_price > 0)
+    ),
+    mean(is.na(analysis_enriched_df$sector_clean)),
+    mean(is.na(analysis_enriched_df$industry_clean)),
+    safe_rate(
+      sum(
+        analysis_enriched_df$is_sp500 &
+          analysis_enriched_df$valid_yahoo_data,
+        na.rm = TRUE
+      ),
+      sum(analysis_enriched_df$is_sp500, na.rm = TRUE)
+    )
+  ),
+  display_value = c(
+    format_count(nrow(analysis_enriched_df)),
+    format_percent_1(
+      safe_rate(
+        nrow(analysis_enriched_df) -
+          dplyr::n_distinct(
+            analysis_enriched_df$symbol_yahoo,
+            na.rm = TRUE
+          ),
+        nrow(analysis_enriched_df)
+      )
+    ),
+    format_percent_1(
+      safe_rate(
+        sum(analysis_enriched_df$valid_yahoo_data, na.rm = TRUE),
+        nrow(analysis_enriched_df)
+      )
+    ),
+    format_percent_1(
+      mean(
+        !(is.finite(analysis_enriched_df$market_cap) &
+            analysis_enriched_df$market_cap > 0)
+      )
+    ),
+    format_percent_1(
+      mean(
+        !(is.finite(analysis_enriched_df$reference_price) &
+            analysis_enriched_df$reference_price > 0)
+      )
+    ),
+    format_percent_1(mean(is.na(analysis_enriched_df$sector_clean))),
+    format_percent_1(mean(is.na(analysis_enriched_df$industry_clean))),
+    format_percent_1(
+      safe_rate(
+        sum(
+          analysis_enriched_df$is_sp500 &
+            analysis_enriched_df$valid_yahoo_data,
+          na.rm = TRUE
+        ),
+        sum(analysis_enriched_df$is_sp500, na.rm = TRUE)
+      )
+    )
+  )
+)
+
+equity_filter_result <- apply_equity_filters(analysis_enriched_df)
+
+equity_universe_df <- equity_filter_result$data |>
+  dplyr::arrange(symbol_yahoo) |>
+  dplyr::distinct(symbol_yahoo, .keep_all = TRUE) |>
+  dplyr::mutate(
+    benchmark_group = factor(benchmark_group, levels = benchmark_levels)
+  )
+
+equity_attrition_table <- equity_filter_result$log |>
+  dplyr::mutate(
+    removal_rate_display = format_percent_1(removal_rate_from_previous)
+  )
+
+final_universe_group_counts <- equity_universe_df |>
+  dplyr::count(benchmark_group, name = "ticker_count", .drop = FALSE)
+
+quote_log_file <- file.path(
+  cache_directory,
+  paste0("quote_log_", analysis_date, "_", download_symbol_hash, ".csv")
+)
+price_log_file <- file.path(
+  cache_directory,
+  paste0("price_log_", analysis_date, "_", download_symbol_hash, ".csv")
+)
+
+write_csv_safely <- function(data, path) {
+  write_attempt <- capture_call(function() {
+    readr::write_csv(data, path, na = "")
+    invisible(path)
+  })
+
+  tibble::tibble(
+    output_file = path,
+    status = if (isTRUE(write_attempt$ok)) "written" else "write_failed",
+    message = if (isTRUE(write_attempt$ok)) {
+      if (length(write_attempt$warnings) == 0L) {
+        NA_character_
+      } else {
+        paste(write_attempt$warnings, collapse = " | ")
+      }
+    } else {
+      write_attempt$error
+    }
+  )
+}
+
+quote_log_write <- write_csv_safely(quote_log, quote_log_file)
+price_log_write <- write_csv_safely(price_log, price_log_file)
+```
+
+```{r}
+#| label: final-universe-tables
+#| results: asis
+
+show_table(
+  post_retrieval_data_quality |>
+    dplyr::select(metric, display_value),
+  "Post-retrieval data quality for operating-company candidates"
+)
+show_table(
+  equity_attrition_table |>
+    dplyr::select(
+      step,
+      starting_observations,
+      removed_at_step,
+      remaining_observations,
+      removal_rate_display
+    ),
+  "Sequential construction of equity_universe_df"
+)
+show_table(
+  final_universe_group_counts,
+  "Final operating-company equity universe by benchmark group"
+)
+
+retrieval_log_files <- dplyr::bind_rows(
+  quote_log_write |>
+    dplyr::mutate(log = "Snapshot quote", .before = 1),
+  price_log_write |>
+    dplyr::mutate(log = "Historical price", .before = 1)
+)
+show_table(retrieval_log_files, "Retrieval-log output status")
+```
+
+# Module 1: Universe scale and security-type breakdown
+
+The full listed-security universe is used in this module. Counts therefore include securities that are intentionally excluded from later operating-company analyses.
+
+```{r}
+#| label: module1-summaries
+#| results: asis
+
+module1_exchange_summary <- universe_df |>
+  dplyr::count(exchange, name = "ticker_count") |>
+  dplyr::arrange(dplyr::desc(ticker_count))
+
+module1_security_summary <- universe_df |>
+  dplyr::count(security_type, name = "ticker_count") |>
+  dplyr::arrange(dplyr::desc(ticker_count))
+
+module1_detail_summary <- universe_df |>
+  dplyr::count(
+    exchange,
+    security_type,
+    benchmark_group,
+    name = "ticker_count",
+    .drop = FALSE
+  ) |>
+  dplyr::arrange(exchange, security_type, benchmark_group)
+
+module1_coverage <- tibble::tibble(
+  metric = "Inferred security-type classification",
+  initial_observations = nrow(universe_df),
+  valid_observations = sum(!is.na(universe_df$security_type)),
+  missing_observations = sum(is.na(universe_df$security_type)),
+  missingness_rate = format_percent_1(mean(is.na(universe_df$security_type))),
+  sp500_valid = sum(universe_df$is_sp500 & !is.na(universe_df$security_type)),
+  broader_market_valid = sum(
+    !universe_df$is_sp500 & !is.na(universe_df$security_type)
+  )
+)
+
+module1_benchmark_match_summary <- tibble::tibble(
+  measure = c(
+    "S&P 500 constituent symbols",
+    "Matched to exchange universe",
+    "Not matched to exchange universe",
+    "Match rate",
+    "Missing security-type classification rate"
+  ),
+  value = c(
+    dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE),
+    dplyr::n_distinct(
+      universe_df$symbol_yahoo[universe_df$is_sp500],
+      na.rm = TRUE
+    ),
+    nrow(sp500_universe_match),
+    safe_rate(
+      dplyr::n_distinct(
+        universe_df$symbol_yahoo[universe_df$is_sp500],
+        na.rm = TRUE
+      ),
+      dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE)
+    ),
+    mean(is.na(universe_df$security_type))
+  ),
+  display_value = c(
+    format_count(dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE)),
+    format_count(
+      dplyr::n_distinct(
+        universe_df$symbol_yahoo[universe_df$is_sp500],
+        na.rm = TRUE
+      )
+    ),
+    format_count(nrow(sp500_universe_match)),
+    format_percent_1(
+      safe_rate(
+        dplyr::n_distinct(
+          universe_df$symbol_yahoo[universe_df$is_sp500],
+          na.rm = TRUE
+        ),
+        dplyr::n_distinct(sp500_df$symbol_yahoo, na.rm = TRUE)
+      )
+    ),
+    format_percent_1(mean(is.na(universe_df$security_type)))
+  )
+)
+
+show_table(module1_coverage, "Module 1 data coverage")
+show_table(module1_exchange_summary, "Ticker records by exchange")
+show_table(module1_security_summary, "Ticker records by inferred security type")
+show_table(
+  module1_detail_summary,
+  "Ticker records by exchange, inferred security type, and benchmark membership"
+)
+show_table(
+  module1_benchmark_match_summary |>
+    dplyr::select(measure, display_value),
+  "Module 1 benchmark matching and classification coverage"
+)
+```
+
+```{r}
+#| label: fig-module1-universe-scale
+#| fig-width: 12
+#| fig-height: 10
+#| fig-cap: "Listed-security counts by exchange, inferred security type, and S&P 500 membership. Facets use independent vertical scales to keep smaller security classes readable."
+
+module1_plot_data <- module1_detail_summary |>
+  dplyr::mutate(
+    benchmark_group = factor(benchmark_group, levels = benchmark_levels),
+    exchange = factor(exchange, levels = c("NASDAQ", "NYSE", "AMEX"))
+  )
+
+module1_label_data <- module1_plot_data |>
+  dplyr::group_by(exchange, security_type) |>
+  dplyr::summarise(
+    total_tickers = sum(ticker_count, na.rm = TRUE),
+    sp500_tickers = sum(
+      ticker_count[benchmark_group == "S&P 500"],
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  ) |>
+  dplyr::mutate(
+    label = dplyr::if_else(
+      sp500_tickers > 0,
+      paste0("S&P 500: ", scales::comma(sp500_tickers)),
+      ""
+    )
+  )
+
+module1_plot <- ggplot(
+  module1_plot_data,
+  aes(x = exchange, y = ticker_count, fill = benchmark_group)
+) +
+  geom_col(width = 0.72) +
+  geom_text(
+    data = module1_label_data,
+    aes(x = exchange, y = total_tickers, label = label),
+    inherit.aes = FALSE,
+    vjust = -0.35,
+    size = 3.1,
+    color = "#123B66"
+  ) +
+  facet_wrap(
+    vars(security_type),
+    scales = "free_y",
+    ncol = 3
+  ) +
+  scale_fill_manual(values = benchmark_colors, drop = FALSE) +
+  scale_y_continuous(
+    labels = scales::label_number(big.mark = ","),
+    expand = expansion(mult = c(0, 0.16))
+  ) +
+  coord_cartesian(clip = "off") +
+  labs(
+    title = "The listed universe extends far beyond operating-company common stocks",
+    subtitle = paste0(
+      "Counts include all usable NASDAQ, NYSE, and AMEX directory records; ",
+      "security type is inferred from names and ticker patterns."
+    ),
+    x = NULL,
+    y = "Ticker records",
+    caption = paste0(
+      "Sources: tidyquant::tq_exchange() and tidyquant::tq_index('SP500'). ",
+      "Analysis date: ", analysis_date, "."
+    )
+  ) +
+  theme(
+    axis.text.x = element_text(face = "bold"),
+    panel.spacing = grid::unit(1.1, "lines")
+  )
+
+module1_plot
+```
+
+# Module 2: Market capitalization and liquidity distributions
+
+Market capitalization uses valid exchange-directory market capitalization first and a Yahoo quote value only as a fallback. Liquidity is the mean of unadjusted daily close multiplied by daily share volume over the most recent 30 valid trading observations. The metric is set to `NA` when fewer than `r minimum_valid_trading_days` valid observations are available.
+
+```{r}
+#| label: module2-summaries
+#| results: asis
+
+module2_coverage <- metric_coverage_table(
+  equity_universe_df,
+  metrics = c(
+    "market_cap",
+    "avg_daily_share_volume_30d",
+    "avg_daily_dollar_volume_30d"
+  ),
+  labels = c(
+    "Market capitalization",
+    "30-day average daily share volume",
+    "30-day average daily dollar volume"
+  )
+) |>
+  dplyr::mutate(
+    missingness_rate = format_percent_1(missingness_rate)
+  )
+
+module2_summary <- equity_universe_df |>
+  dplyr::group_by(benchmark_group, .drop = FALSE) |>
+  dplyr::summarise(
+    ticker_count = dplyr::n(),
+    valid_market_cap_count = sum(is.finite(market_cap)),
+    median_market_cap = safe_median(market_cap),
+    market_cap_p25 = safe_quantile(market_cap, 0.25),
+    market_cap_p75 = safe_quantile(market_cap, 0.75),
+    market_cap_missing_rate = mean(!is.finite(market_cap)),
+    valid_liquidity_count = sum(is.finite(avg_daily_dollar_volume_30d)),
+    median_share_volume_30d = safe_median(avg_daily_share_volume_30d),
+    median_dollar_volume_30d = safe_median(avg_daily_dollar_volume_30d),
+    share_volume_missing_rate = mean(!is.finite(avg_daily_share_volume_30d)),
+    dollar_volume_missing_rate = mean(!is.finite(avg_daily_dollar_volume_30d)),
+    .groups = "drop"
+  )
+
+module2_summary_display <- module2_summary |>
+  dplyr::transmute(
+    benchmark_group,
+    ticker_count = format_count(ticker_count),
+    valid_market_cap_count = format_count(valid_market_cap_count),
+    median_market_cap = format_dollar_short(median_market_cap),
+    market_cap_p25 = format_dollar_short(market_cap_p25),
+    market_cap_p75 = format_dollar_short(market_cap_p75),
+    market_cap_missing_rate = format_percent_1(market_cap_missing_rate),
+    valid_liquidity_count = format_count(valid_liquidity_count),
+    median_share_volume_30d = format_number_short(median_share_volume_30d),
+    median_dollar_volume_30d = format_dollar_short(median_dollar_volume_30d),
+    share_volume_missing_rate = format_percent_1(share_volume_missing_rate),
+    dollar_volume_missing_rate = format_percent_1(dollar_volume_missing_rate)
+  )
+
+show_table(module2_coverage, "Module 2 data coverage")
+show_table(module2_summary_display, "Module 2 distribution summary by benchmark group")
+```
+
+```{r}
+#| label: fig-module2-distributions
+#| fig-width: 13
+#| fig-height: 6.2
+#| fig-cap: "Log-scale distributions of market capitalization and 30-day average daily dollar volume."
+
+market_cap_plot_data <- equity_universe_df |>
+  dplyr::filter(is.finite(market_cap), market_cap > 0)
+
+liquidity_plot_data <- equity_universe_df |>
+  dplyr::filter(
+    is.finite(avg_daily_dollar_volume_30d),
+    avg_daily_dollar_volume_30d > 0
+  )
+
+market_cap_subtitle <- paste0(
+  "Log10 scale; ",
+  scales::comma(nrow(market_cap_plot_data)),
+  " valid observations. Exchange-directory market cap is primary; Yahoo is the fallback."
+)
+
+liquidity_subtitle <- paste0(
+  "Log10 scale; ",
+  scales::comma(nrow(liquidity_plot_data)),
+  " valid observations. Minimum history: ",
+  minimum_valid_trading_days,
+  " of the latest ",
+  liquidity_trading_days,
+  " trading days."
+)
+
+common_module2_caption <- paste0(
+  "Sources: NASDAQ exchange directories and Yahoo Finance via tidyquant/quantmod. ",
+  "Analysis date: ", analysis_date, "."
+)
+
+market_cap_plot <- make_density_plot(
+  data = market_cap_plot_data,
+  variable = "market_cap",
+  title = "Market capitalization",
+  subtitle = market_cap_subtitle,
+  x_label = "Market capitalization (USD, log10 scale)",
+  caption = common_module2_caption,
+  log10_axis = TRUE
+)
+
+liquidity_plot <- make_density_plot(
+  data = liquidity_plot_data,
+  variable = "avg_daily_dollar_volume_30d",
+  title = "30-day average daily dollar volume",
+  subtitle = liquidity_subtitle,
+  x_label = "Average daily dollar volume (USD, log10 scale)",
+  caption = common_module2_caption,
+  log10_axis = TRUE
+)
+
+module2_combined_plot <-
+  (market_cap_plot | liquidity_plot) +
+  patchwork::plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+module2_combined_plot
+```
+
+# Module 3: Fundamental and profitability profiling
+
+The snapshot quote route is used for trailing P/E and price-to-book. P/E plotting retains positive finite observations from 0 to 100. Price-to-book plotting retains positive finite observations from 0 to 20. Values outside these display bounds remain in the stored data and are counted below; the underlying fields are not winsorized.
+
+```{r}
+#| label: module3-summaries
+#| results: asis
+
+module3_summary <- equity_universe_df |>
+  dplyr::group_by(benchmark_group, .drop = FALSE) |>
+  dplyr::summarise(
+    ticker_count = dplyr::n(),
+    valid_pe_count = sum(is.finite(trailing_pe) & trailing_pe > 0),
+    pe_coverage_rate = mean(is.finite(trailing_pe) & trailing_pe > 0),
+    median_pe = safe_median(trailing_pe[is.finite(trailing_pe) & trailing_pe > 0]),
+    pe_p25 = safe_quantile(
+      trailing_pe[is.finite(trailing_pe) & trailing_pe > 0],
+      0.25
+    ),
+    pe_p75 = safe_quantile(
+      trailing_pe[is.finite(trailing_pe) & trailing_pe > 0],
+      0.75
+    ),
+    pe_above_100 = sum(is.finite(trailing_pe) & trailing_pe > 100),
+    valid_price_to_book_count = sum(
+      is.finite(price_to_book) & price_to_book > 0
+    ),
+    price_to_book_coverage_rate = mean(
+      is.finite(price_to_book) & price_to_book > 0
+    ),
+    median_price_to_book = safe_median(
+      price_to_book[is.finite(price_to_book) & price_to_book > 0]
+    ),
+    price_to_book_p25 = safe_quantile(
+      price_to_book[is.finite(price_to_book) & price_to_book > 0],
+      0.25
+    ),
+    price_to_book_p75 = safe_quantile(
+      price_to_book[is.finite(price_to_book) & price_to_book > 0],
+      0.75
+    ),
+    price_to_book_above_20 = sum(
+      is.finite(price_to_book) & price_to_book > 20
+    ),
+    operating_margin_coverage_rate = mean(is.finite(operating_margin)),
+    .groups = "drop"
+  )
+
+module3_summary_display <- module3_summary |>
+  dplyr::transmute(
+    benchmark_group,
+    ticker_count = format_count(ticker_count),
+    valid_pe_count = format_count(valid_pe_count),
+    pe_coverage_rate = format_percent_1(pe_coverage_rate),
+    median_pe = dplyr::if_else(
+      is.na(median_pe), "NA", scales::number(median_pe, accuracy = 0.1)
+    ),
+    pe_iqr = dplyr::if_else(
+      is.na(pe_p25) | is.na(pe_p75),
+      "NA",
+      paste0(
+        scales::number(pe_p25, accuracy = 0.1),
+        " to ",
+        scales::number(pe_p75, accuracy = 0.1)
+      )
+    ),
+    pe_above_100 = format_count(pe_above_100),
+    valid_price_to_book_count = format_count(valid_price_to_book_count),
+    price_to_book_coverage_rate = format_percent_1(
+      price_to_book_coverage_rate
+    ),
+    median_price_to_book = dplyr::if_else(
+      is.na(median_price_to_book),
+      "NA",
+      scales::number(median_price_to_book, accuracy = 0.1)
+    ),
+    price_to_book_iqr = dplyr::if_else(
+      is.na(price_to_book_p25) | is.na(price_to_book_p75),
+      "NA",
+      paste0(
+        scales::number(price_to_book_p25, accuracy = 0.1),
+        " to ",
+        scales::number(price_to_book_p75, accuracy = 0.1)
+      )
+    ),
+    price_to_book_above_20 = format_count(price_to_book_above_20),
+    operating_margin_coverage_rate = format_percent_1(
+      operating_margin_coverage_rate
+    )
+  )
+
+module3_coverage <- dplyr::bind_rows(
+  tibble::tibble(
+    metric = "Trailing P/E: positive finite observations",
+    initial_observations = nrow(equity_universe_df),
+    valid_observations = sum(
+      is.finite(equity_universe_df$trailing_pe) &
+        equity_universe_df$trailing_pe > 0
+    ),
+    missing_observations = sum(
+      !(is.finite(equity_universe_df$trailing_pe) &
+          equity_universe_df$trailing_pe > 0)
+    ),
+    missingness_rate = mean(
+      !(is.finite(equity_universe_df$trailing_pe) &
+          equity_universe_df$trailing_pe > 0)
+    ),
+    sp500_valid = sum(
+      equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$trailing_pe) &
+        equity_universe_df$trailing_pe > 0
+    ),
+    broader_market_valid = sum(
+      !equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$trailing_pe) &
+        equity_universe_df$trailing_pe > 0
+    )
+  ),
+  tibble::tibble(
+    metric = "Price-to-book: positive finite observations",
+    initial_observations = nrow(equity_universe_df),
+    valid_observations = sum(
+      is.finite(equity_universe_df$price_to_book) &
+        equity_universe_df$price_to_book > 0
+    ),
+    missing_observations = sum(
+      !(is.finite(equity_universe_df$price_to_book) &
+          equity_universe_df$price_to_book > 0)
+    ),
+    missingness_rate = mean(
+      !(is.finite(equity_universe_df$price_to_book) &
+          equity_universe_df$price_to_book > 0)
+    ),
+    sp500_valid = sum(
+      equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$price_to_book) &
+        equity_universe_df$price_to_book > 0
+    ),
+    broader_market_valid = sum(
+      !equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$price_to_book) &
+        equity_universe_df$price_to_book > 0
+    )
+  ),
+  tibble::tibble(
+    metric = "Operating margin",
+    initial_observations = nrow(equity_universe_df),
+    valid_observations = sum(is.finite(equity_universe_df$operating_margin)),
+    missing_observations = sum(!is.finite(equity_universe_df$operating_margin)),
+    missingness_rate = mean(!is.finite(equity_universe_df$operating_margin)),
+    sp500_valid = sum(
+      equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$operating_margin)
+    ),
+    broader_market_valid = sum(
+      !equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$operating_margin)
+    )
+  )
+) |>
+  dplyr::mutate(missingness_rate = format_percent_1(missingness_rate))
+
+show_table(module3_coverage, "Module 3 data coverage")
+show_table(module3_summary_display, "Module 3 valuation summary by benchmark group")
+```
+
+```{r}
+#| label: fig-module3-valuations
+#| fig-width: 13
+#| fig-height: 6.2
+#| fig-cap: "Trailing P/E and price-to-book distributions using disclosed plotting bounds."
+
+pe_plot_data <- equity_universe_df |>
+  dplyr::filter(
+    is.finite(trailing_pe),
+    trailing_pe > 0,
+    trailing_pe <= 100
+  )
+
+price_to_book_plot_data <- equity_universe_df |>
+  dplyr::filter(
+    is.finite(price_to_book),
+    price_to_book > 0,
+    price_to_book <= 20
+  )
+
+pe_positive_count <- sum(
+  is.finite(equity_universe_df$trailing_pe) &
+    equity_universe_df$trailing_pe > 0
+)
+price_to_book_positive_count <- sum(
+  is.finite(equity_universe_df$price_to_book) &
+    equity_universe_df$price_to_book > 0
+)
+pe_coverage_overall <- safe_rate(pe_positive_count, nrow(equity_universe_df))
+price_to_book_coverage_overall <- safe_rate(
+  price_to_book_positive_count,
+  nrow(equity_universe_df)
+)
+pe_above_bound <- sum(
+  is.finite(equity_universe_df$trailing_pe) &
+    equity_universe_df$trailing_pe > 100
+)
+price_to_book_above_bound <- sum(
+  is.finite(equity_universe_df$price_to_book) &
+    equity_universe_df$price_to_book > 20
+)
+
+module3_caption <- paste0(
+  "Source: Yahoo Finance snapshot fields via quantmod::getQuote(). ",
+  "Analysis date: ", analysis_date, ". Values outside the display bounds remain in the stored data."
+)
+
+pe_plot <- make_density_plot(
+  data = pe_plot_data,
+  variable = "trailing_pe",
+  title = "Trailing P/E ratio",
+  subtitle = paste0(
+    "Positive-finite coverage: ",
+    format_percent_1(pe_coverage_overall),
+    "; display range: 0 to 100; included: ",
+    scales::comma(nrow(pe_plot_data)),
+    "; above 100: ",
+    scales::comma(pe_above_bound),
+    "."
+  ),
+  x_label = "Trailing P/E ratio",
+  caption = module3_caption,
+  lower_bound = 0,
+  upper_bound = 100
+) +
+  scale_x_continuous(breaks = seq(0, 100, by = 20))
+
+price_to_book_plot <- make_density_plot(
+  data = price_to_book_plot_data,
+  variable = "price_to_book",
+  title = "Price-to-book ratio",
+  subtitle = paste0(
+    "Positive-finite coverage: ",
+    format_percent_1(price_to_book_coverage_overall),
+    "; display range: 0 to 20; included: ",
+    scales::comma(nrow(price_to_book_plot_data)),
+    "; above 20: ",
+    scales::comma(price_to_book_above_bound),
+    "."
+  ),
+  x_label = "Price-to-book ratio",
+  caption = module3_caption,
+  lower_bound = 0,
+  upper_bound = 20
+) +
+  scale_x_continuous(breaks = seq(0, 20, by = 5))
+
+module3_combined_plot <-
+  (pe_plot | price_to_book_plot) +
+  patchwork::plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+module3_combined_plot
+```
+
+```{r}
+#| label: operating-margin-note
+#| results: asis
+
+operating_margin_coverage <- if (nrow(equity_universe_df) == 0L) {
+  NA_real_
+} else {
+  mean(is.finite(equity_universe_df$operating_margin))
+}
+
+if (is.na(operating_margin_coverage) || operating_margin_coverage < 0.20) {
+  cat(
+    paste0(
+      "::: {.callout-note}\n",
+      "## Operating margin omitted\n\n",
+      "The selected documented `quantmod::getQuote()` Yahoo snapshot fields do not provide operating margin. ",
+      "No API key or undocumented scraping endpoint is used, so operating-margin coverage is ",
+      format_percent_1(operating_margin_coverage),
+      " and no operating-margin plot is produced. The report continues without substituting values.\n",
+      ":::\n"
+    )
+  )
+}
+```
+
+# Module 4: Sector concentration and skew
+
+For this module, the **broad equity universe** means the complete final operating-company equity universe, including current S&P 500 constituents. Ticker-count share is the equal-weighted listing-breadth view. Market-cap share weights that same broad universe by valid market capitalization. S&P 500 weights come directly from the current constituent table and are re-normalized over positive constituent weights.
+
+```{r}
+#| label: module4-calculations
+
+sp500_positive_weight_total <- sum(
+  sp500_df$sp500_weight[
+    is.finite(sp500_df$sp500_weight) &
+      sp500_df$sp500_weight > 0
+  ],
+  na.rm = TRUE
+)
+
+sp500_missing_sector_weight <- sum(
+  sp500_df$sp500_weight[
+    is.finite(sp500_df$sp500_weight) &
+      sp500_df$sp500_weight > 0 &
+      is.na(sp500_df$sp500_sector_clean)
+  ],
+  na.rm = TRUE
+)
+
+sp500_sector_weights <- sp500_df |>
+  dplyr::filter(
+    !is.na(sp500_sector_clean),
+    is.finite(sp500_weight),
+    sp500_weight > 0
+  ) |>
+  dplyr::group_by(sector = sp500_sector_clean) |>
+  dplyr::summarise(
+    sp500_weight_pct = sum(sp500_weight, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+sp500_sector_weight_sum <- sum(
+  sp500_sector_weights$sp500_weight_pct,
+  na.rm = TRUE
+)
+
+if (sp500_sector_weight_sum > 0) {
+  sp500_sector_weights <- sp500_sector_weights |>
+    dplyr::mutate(
+      sp500_weight_pct = sp500_weight_pct / sp500_sector_weight_sum
+    )
+}
+
+broader_market_sector_base <- equity_universe_df
+
+broader_market_total_count <- nrow(broader_market_sector_base)
+broader_market_classified_count <- sum(
+  !is.na(broader_market_sector_base$sector_clean)
+)
+broader_market_missing_sector_count <- sum(
+  is.na(broader_market_sector_base$sector_clean)
+)
+
+broader_market_total_cap <- sum(
+  broader_market_sector_base$market_cap[
+    is.finite(broader_market_sector_base$market_cap) &
+      broader_market_sector_base$market_cap > 0
+  ],
+  na.rm = TRUE
+)
+
+broader_market_missing_sector_cap <- sum(
+  broader_market_sector_base$market_cap[
+    is.finite(broader_market_sector_base$market_cap) &
+      broader_market_sector_base$market_cap > 0 &
+      is.na(broader_market_sector_base$sector_clean)
+  ],
+  na.rm = TRUE
+)
+
+broader_sector_counts <- broader_market_sector_base |>
+  dplyr::filter(!is.na(sector_clean)) |>
+  dplyr::count(sector = sector_clean, name = "ticker_count")
+
+if (broader_market_classified_count > 0L) {
+  broader_sector_counts <- broader_sector_counts |>
+    dplyr::mutate(
+      broad_ticker_count_pct = ticker_count / broader_market_classified_count
+    )
+} else {
+  broader_sector_counts <- broader_sector_counts |>
+    dplyr::mutate(broad_ticker_count_pct = NA_real_)
+}
+
+broader_sector_market_cap <- broader_market_sector_base |>
+  dplyr::filter(
+    !is.na(sector_clean),
+    is.finite(market_cap),
+    market_cap > 0
+  ) |>
+  dplyr::group_by(sector = sector_clean) |>
+  dplyr::summarise(
+    sector_market_cap = sum(market_cap, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+classified_broader_market_cap <- sum(
+  broader_sector_market_cap$sector_market_cap,
+  na.rm = TRUE
+)
+
+if (classified_broader_market_cap > 0) {
+  broader_sector_market_cap <- broader_sector_market_cap |>
+    dplyr::mutate(
+      broad_market_cap_pct = sector_market_cap / classified_broader_market_cap
+    )
+} else {
+  broader_sector_market_cap <- broader_sector_market_cap |>
+    dplyr::mutate(broad_market_cap_pct = NA_real_)
+}
+
+sector_comparison_table <- sp500_sector_weights |>
+  dplyr::full_join(
+    broader_sector_counts |>
+      dplyr::select(sector, broad_ticker_count_pct),
+    by = "sector"
+  ) |>
+  dplyr::full_join(
+    broader_sector_market_cap |>
+      dplyr::select(sector, broad_market_cap_pct),
+    by = "sector"
+  )
+
+if (sp500_sector_weight_sum > 0) {
+  sector_comparison_table$sp500_weight_pct <- tidyr::replace_na(
+    sector_comparison_table$sp500_weight_pct,
+    0
+  )
+}
+if (broader_market_classified_count > 0L) {
+  sector_comparison_table$broad_ticker_count_pct <- tidyr::replace_na(
+    sector_comparison_table$broad_ticker_count_pct,
+    0
+  )
+}
+if (classified_broader_market_cap > 0) {
+  sector_comparison_table$broad_market_cap_pct <- tidyr::replace_na(
+    sector_comparison_table$broad_market_cap_pct,
+    0
+  )
+}
+
+sector_comparison_table <- sector_comparison_table |>
+  dplyr::mutate(
+    sp500_minus_broad_market_cap =
+      sp500_weight_pct - broad_market_cap_pct,
+    sp500_minus_broad_ticker_count =
+      sp500_weight_pct - broad_ticker_count_pct
+  ) |>
+  dplyr::arrange(
+    dplyr::desc(sp500_weight_pct),
+    dplyr::desc(broad_market_cap_pct)
+  )
+
+module4_metric_coverage <- dplyr::bind_rows(
+  tibble::tibble(
+    metric = "Standardized sector classification",
+    initial_observations = nrow(equity_universe_df),
+    valid_observations = sum(!is.na(equity_universe_df$sector_clean)),
+    missing_observations = sum(is.na(equity_universe_df$sector_clean)),
+    missingness_rate = mean(is.na(equity_universe_df$sector_clean)),
+    sp500_valid = sum(
+      equity_universe_df$is_sp500 & !is.na(equity_universe_df$sector_clean)
+    ),
+    broader_market_valid = sum(
+      !equity_universe_df$is_sp500 & !is.na(equity_universe_df$sector_clean)
+    )
+  ),
+  tibble::tibble(
+    metric = "Positive market capitalization",
+    initial_observations = nrow(equity_universe_df),
+    valid_observations = sum(
+      is.finite(equity_universe_df$market_cap) &
+        equity_universe_df$market_cap > 0
+    ),
+    missing_observations = sum(
+      !(is.finite(equity_universe_df$market_cap) &
+          equity_universe_df$market_cap > 0)
+    ),
+    missingness_rate = mean(
+      !(is.finite(equity_universe_df$market_cap) &
+          equity_universe_df$market_cap > 0)
+    ),
+    sp500_valid = sum(
+      equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$market_cap) &
+        equity_universe_df$market_cap > 0
+    ),
+    broader_market_valid = sum(
+      !equity_universe_df$is_sp500 &
+        is.finite(equity_universe_df$market_cap) &
+        equity_universe_df$market_cap > 0
+    )
+  )
+) |>
+  dplyr::mutate(missingness_rate = format_percent_1(missingness_rate))
+
+sector_coverage_table <- tibble::tibble(
+  measure = c(
+    "S&P 500 positive constituent weight represented by classified sectors",
+    "S&P 500 weight omitted for missing sector",
+    "Broad-universe ticker records represented by classified sectors",
+    "Broad-universe ticker records omitted for missing sector",
+    "Broad-universe market capitalization represented by classified sectors",
+    "Broad-universe market capitalization omitted for missing sector"
+  ),
+  value = c(
+    sp500_sector_weight_sum,
+    sp500_missing_sector_weight,
+    broader_market_classified_count,
+    broader_market_missing_sector_count,
+    classified_broader_market_cap,
+    broader_market_missing_sector_cap
+  ),
+  display_value = c(
+    format_percent_1(sp500_sector_weight_sum),
+    format_percent_1(sp500_missing_sector_weight),
+    format_count(broader_market_classified_count),
+    paste0(
+      format_count(broader_market_missing_sector_count),
+      " (",
+      format_percent_1(
+        safe_rate(
+          broader_market_missing_sector_count,
+          broader_market_total_count
+        )
+      ),
+      ")"
+    ),
+    format_dollar_short(classified_broader_market_cap),
+    paste0(
+      format_dollar_short(broader_market_missing_sector_cap),
+      " (",
+      format_percent_1(
+        safe_rate(
+          broader_market_missing_sector_cap,
+          broader_market_total_cap
+        )
+      ),
+      ")"
+    )
+  )
+)
+
+sector_comparison_display <- sector_comparison_table |>
+  dplyr::transmute(
+    sector,
+    sp500_weight_pct = format_percent_1(sp500_weight_pct),
+    broad_ticker_count_pct = format_percent_1(broad_ticker_count_pct),
+    broad_market_cap_pct = format_percent_1(broad_market_cap_pct),
+    sp500_minus_broad_market_cap = format_percent_1(
+      sp500_minus_broad_market_cap
+    ),
+    sp500_minus_broad_ticker_count = format_percent_1(
+      sp500_minus_broad_ticker_count
+    )
+  )
+```
+
+```{r}
+#| label: module4-summaries
+#| results: asis
+
+show_table(module4_metric_coverage, "Module 4 data coverage")
+show_table(sector_coverage_table, "Module 4 sector coverage and omitted weight")
+show_table(
+  sector_comparison_display,
+  "Sector concentration: S&P 500 versus the broad equity universe"
+)
+```
+
+```{r}
+#| label: fig-module4-sector-concentration
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "Sector weights for the S&P 500 compared with equal-weighted ticker breadth and market-cap-weighted concentration in the broad operating-company universe."
+
+sector_plot_data <- sector_comparison_table |>
+  dplyr::select(
+    sector,
+    sp500_weight_pct,
+    broad_ticker_count_pct,
+    broad_market_cap_pct
+  ) |>
+  tidyr::pivot_longer(
+    cols = -sector,
+    names_to = "measure",
+    values_to = "sector_share"
+  ) |>
+  dplyr::mutate(
+    measure = dplyr::recode(
+      measure,
+      sp500_weight_pct = "S&P 500 constituent weight",
+      broad_ticker_count_pct = "Broad-universe ticker-count share",
+      broad_market_cap_pct = "Broad-universe market-cap share"
+    ),
+    measure = factor(
+      measure,
+      levels = names(sector_measure_colors)
+    )
+  ) |>
+  dplyr::filter(is.finite(sector_share))
+
+sector_order <- sector_comparison_table |>
+  dplyr::arrange(
+    dplyr::desc(sp500_weight_pct),
+    dplyr::desc(broad_market_cap_pct)
+  ) |>
+  dplyr::pull(sector)
+
+sector_plot_data <- sector_plot_data |>
+  dplyr::mutate(
+    sector = factor(sector, levels = rev(unique(sector_order)))
+  )
+
+if (nrow(sector_plot_data) == 0L) {
+  module4_plot <- empty_plot(
+    "Sector concentration and skew",
+    "No valid sector-share series are available.",
+    paste0("Analysis date: ", analysis_date, ".")
+  )
+} else {
+  module4_plot <- ggplot(
+    sector_plot_data,
+    aes(x = sector, y = sector_share, fill = measure)
+  ) +
+    geom_col(
+      position = position_dodge(width = 0.78),
+      width = 0.70
+    ) +
+    coord_flip() +
+    scale_fill_manual(values = sector_measure_colors, drop = FALSE) +
+    scale_y_continuous(
+      labels = scales::label_percent(accuracy = 1),
+      expand = expansion(mult = c(0, 0.05))
+    ) +
+    labs(
+      title = "Benchmark weights emphasize a different sector mix than listing breadth",
+      subtitle = paste0(
+        "Ticker-count share is equal weighted; market-cap share weights the full operating-company universe by valid market cap."
+      ),
+      x = NULL,
+      y = "Sector share",
+      caption = paste0(
+        "Sources: tidyquant::tq_index('SP500') and the cleaned exchange universe. ",
+        "Broad-universe measures include current S&P 500 constituents. Analysis date: ",
+        analysis_date,
+        "."
+      )
+    )
+}
+
+module4_plot
+```
+
+# Consolidated data coverage
+
+```{r}
+#| label: consolidated-missingness
+
+missingness_row <- function(scope, data, variable, missing_condition = NULL) {
+  if (!is.data.frame(data)) {
+    return(tibble::tibble())
+  }
+
+  total <- nrow(data)
+
+  if (is.null(missing_condition)) {
+    values <- data[[variable]]
+    missing <- is.na(values)
+  } else {
+    missing <- missing_condition(data)
+    missing[is.na(missing)] <- TRUE
+  }
+
+  tibble::tibble(
+    scope = scope,
+    variable = variable,
+    total_observations = total,
+    missing_observations = sum(missing),
+    valid_observations = total - sum(missing),
+    missingness_rate = safe_rate(sum(missing), total)
+  )
+}
+
+consolidated_missingness <- dplyr::bind_rows(
+  missingness_row("Full listed-security universe", universe_df, "exchange"),
+  missingness_row("Full listed-security universe", universe_df, "security_type"),
+  missingness_row(
+    "Download-candidate equity universe",
+    analysis_enriched_df,
+    "market_cap",
+    function(x) !is.finite(x$market_cap) | x$market_cap <= 0
+  ),
+  missingness_row(
+    "Download-candidate equity universe",
+    analysis_enriched_df,
+    "sector_clean"
+  ),
+  missingness_row(
+    "Download-candidate equity universe",
+    analysis_enriched_df,
+    "industry_clean"
+  ),
+  missingness_row(
+    "Download-candidate equity universe",
+    analysis_enriched_df,
+    "historical_price_data",
+    function(x) !x$historical_data_available
+  ),
+  missingness_row(
+    "Download-candidate equity universe",
+    analysis_enriched_df,
+    "avg_daily_share_volume_30d",
+    function(x) !is.finite(x$avg_daily_share_volume_30d)
+  ),
+  missingness_row(
+    "Download-candidate equity universe",
+    analysis_enriched_df,
+    "avg_daily_dollar_volume_30d",
+    function(x) !is.finite(x$avg_daily_dollar_volume_30d)
+  ),
+  missingness_row(
+    "Final operating-company equity universe",
+    equity_universe_df,
+    "trailing_pe",
+    function(x) !is.finite(x$trailing_pe)
+  ),
+  missingness_row(
+    "Final operating-company equity universe",
+    equity_universe_df,
+    "price_to_book",
+    function(x) !is.finite(x$price_to_book)
+  ),
+  missingness_row(
+    "Final operating-company equity universe",
+    equity_universe_df,
+    "operating_margin",
+    function(x) !is.finite(x$operating_margin)
+  )
+)
+
+consolidated_missingness_display <- consolidated_missingness |>
+  dplyr::mutate(
+    total_observations = format_count(total_observations),
+    missing_observations = format_count(missing_observations),
+    valid_observations = format_count(valid_observations),
+    missingness_rate = format_percent_1(missingness_rate)
+  )
+```
+
+```{r}
+#| label: consolidated-missingness-table
+#| results: asis
+
+show_table(
+  consolidated_missingness_display,
+  "Consolidated data coverage and missingness"
+)
+```
+
+# Analytical summary
+
+```{r}
+#| label: final-summary-calculations
+
+get_group_value <- function(data, group_name, column_name) {
+  matching_rows <- as.character(data$benchmark_group) == group_name
+  if (!any(matching_rows)) {
+    return(NA_real_)
+  }
+  data[[column_name]][which(matching_rows)[1L]]
+}
+
+full_listed_count <- nrow(universe_df)
+final_equity_count <- nrow(equity_universe_df)
+final_sp500_count <- sum(equity_universe_df$is_sp500, na.rm = TRUE)
+final_broader_count <- sum(!equity_universe_df$is_sp500, na.rm = TRUE)
+
+sp500_median_market_cap <- get_group_value(
+  module2_summary,
+  "S&P 500",
+  "median_market_cap"
+)
+broader_median_market_cap <- get_group_value(
+  module2_summary,
+  "Broader Market",
+  "median_market_cap"
+)
+sp500_median_dollar_volume <- get_group_value(
+  module2_summary,
+  "S&P 500",
+  "median_dollar_volume_30d"
+)
+broader_median_dollar_volume <- get_group_value(
+  module2_summary,
+  "Broader Market",
+  "median_dollar_volume_30d"
+)
+
+sp500_pe_coverage <- get_group_value(
+  module3_summary,
+  "S&P 500",
+  "pe_coverage_rate"
+)
+broader_pe_coverage <- get_group_value(
+  module3_summary,
+  "Broader Market",
+  "pe_coverage_rate"
+)
+
+sp500_pb_coverage <- get_group_value(
+  module3_summary,
+  "S&P 500",
+  "price_to_book_coverage_rate"
+)
+broader_pb_coverage <- get_group_value(
+  module3_summary,
+  "Broader Market",
+  "price_to_book_coverage_rate"
+)
+
+top_sp500_sector <- sector_comparison_table |>
+  dplyr::filter(is.finite(sp500_weight_pct)) |>
+  dplyr::slice_max(sp500_weight_pct, n = 1L, with_ties = FALSE)
+
+top_broad_market_cap_sector <- sector_comparison_table |>
+  dplyr::filter(is.finite(broad_market_cap_pct)) |>
+  dplyr::slice_max(broad_market_cap_pct, n = 1L, with_ties = FALSE)
+
+top_sp500_sector_name <- if (nrow(top_sp500_sector) == 0L) {
+  "unavailable"
+} else {
+  top_sp500_sector$sector[[1]]
+}
+top_sp500_sector_weight <- if (nrow(top_sp500_sector) == 0L) {
+  NA_real_
+} else {
+  top_sp500_sector$sp500_weight_pct[[1]]
+}
+
+top_broad_sector_name <- if (nrow(top_broad_market_cap_sector) == 0L) {
+  "unavailable"
+} else {
+  top_broad_market_cap_sector$sector[[1]]
+}
+top_broad_sector_weight <- if (nrow(top_broad_market_cap_sector) == 0L) {
+  NA_real_
+} else {
+  top_broad_market_cap_sector$broad_market_cap_pct[[1]]
+}
+
+final_summary_table <- tibble::tibble(
+  measure = c(
+    "Full listed-security records",
+    "Final operating-company equity symbols",
+    "Final S&P 500 symbols",
+    "Final broader-market symbols",
+    "S&P 500 median market capitalization",
+    "Broader-market median market capitalization",
+    "S&P 500 median 30-day dollar volume",
+    "Broader-market median 30-day dollar volume",
+    "S&P 500 positive P/E coverage",
+    "Broader-market positive P/E coverage",
+    "S&P 500 positive price-to-book coverage",
+    "Broader-market positive price-to-book coverage",
+    "Largest S&P 500 sector by current weight",
+    "Largest broad-universe sector by market cap"
+  ),
+  value = c(
+    format_count(full_listed_count),
+    format_count(final_equity_count),
+    format_count(final_sp500_count),
+    format_count(final_broader_count),
+    format_dollar_short(sp500_median_market_cap),
+    format_dollar_short(broader_median_market_cap),
+    format_dollar_short(sp500_median_dollar_volume),
+    format_dollar_short(broader_median_dollar_volume),
+    format_percent_1(sp500_pe_coverage),
+    format_percent_1(broader_pe_coverage),
+    format_percent_1(sp500_pb_coverage),
+    format_percent_1(broader_pb_coverage),
+    paste0(
+      top_sp500_sector_name,
+      " (",
+      format_percent_1(top_sp500_sector_weight),
+      ")"
+    ),
+    paste0(
+      top_broad_sector_name,
+      " (",
+      format_percent_1(top_broad_sector_weight),
+      ")"
+    )
+  )
+)
+```
+
+```{r}
+#| label: final-summary-table
+#| results: asis
+
+show_table(final_summary_table, "Key findings from the rendered data")
+```
+
+The exchange directories contain `r format_count(full_listed_count)` usable listed-security records, while the stricter operating-company analysis contains `r format_count(final_equity_count)` unique symbols. The difference reflects both the presence of non-operating-company securities and the explicit data-quality requirements applied before Modules 2 through 4.
+
+Within the final analytical sample, the median market capitalization is `r format_dollar_short(sp500_median_market_cap)` for S&P 500 constituents and `r format_dollar_short(broader_median_market_cap)` for non-S&P equities. Median 30-day average daily dollar volume is `r format_dollar_short(sp500_median_dollar_volume)` for S&P 500 constituents and `r format_dollar_short(broader_median_dollar_volume)` for the broader market. These are descriptive associations with current index membership; they are not causal estimates of an index-inclusion effect.
+
+Positive trailing P/E coverage is `r format_percent_1(sp500_pe_coverage)` for the S&P 500 group and `r format_percent_1(broader_pe_coverage)` for the broader-market group. Positive price-to-book coverage is `r format_percent_1(sp500_pb_coverage)` and `r format_percent_1(broader_pb_coverage)`, respectively. Differences in the plotted valuation distributions should therefore be interpreted together with these coverage rates.
+
+The largest current S&P 500 sector by constituent weight is **`r top_sp500_sector_name`** at `r format_percent_1(top_sp500_sector_weight)`. The largest sector in the full operating-company universe by market capitalization is **`r top_broad_sector_name`** at `r format_percent_1(top_broad_sector_weight)`. Module 4 separates equal-weighted listing breadth from market-cap concentration so that these distinct concepts are not conflated.
+
+## Limitations
+
+- **Current-constituent and survivorship bias:** The benchmark table represents current constituents, not historical membership. Results do not describe firms that previously left the index or disappeared from the exchange directories.
+- **Point-in-time limitations:** Exchange metadata, index weights, quotes, and recent prices are retrieved from current endpoints and may not share exactly the same timestamp.
+- **Current rather than historical index weights:** S&P 500 sector weights are based on the current constituent snapshot and should not be interpreted as historical weights.
+- **Yahoo Finance availability:** Symbols, quote fields, and historical prices may be missing, delayed, stale, rate limited, or temporarily unavailable. Failed symbols are logged rather than silently discarded.
+- **Heuristic security-type classification:** The exchange feed does not supply a single standardized security-type field. Name and ticker-pattern rules may misclassify unusual securities.
+- **Symbol normalization:** Class-share and preferred-share translations are practical Yahoo mappings, not a universal symbology standard. The original exchange symbol is retained for auditability.
+- **Exchange metadata quality:** Market capitalization, sector, industry, and last-sale fields can be stale or absent. Exchange market capitalization is used first, with Yahoo market capitalization as a documented fallback.
+- **Missing fundamentals:** P/E and price-to-book are available only for a subset of securities. Operating margin is omitted because the selected documented snapshot route does not provide it reliably.
+- **Universe definition:** Raw listed-security counts include funds, preferreds, warrants, rights, units, SPACs, and other instruments. Modules 2 through 4 instead use the stricter common-equity/ADR universe defined in the attrition table.
+- **Descriptive analysis:** Comparisons describe securities associated with current S&P 500 membership. They do not establish that membership causes differences in size, liquidity, valuation, or sector composition.
+
+## Reproducibility notes
+
+- Set `refresh_data <- TRUE` to force new exchange, index, quote, and historical-price requests.
+- With `refresh_data <- FALSE`, exact caches are reused. Exchange and index retrieval may use the most recent prior cache if the current request fails; the retrieval manifest discloses that fallback.
+- Quote and historical-price cache names incorporate the analysis date and an MD5 signature of the requested symbol set, preventing silent reuse for a materially different universe.
+- A quote or historical-price result with no usable market data is returned for diagnostics but deliberately not stored as a reusable cache.
+- Full condition and failed-symbol logs are written as CSV files in `r cache_directory` when that directory is writable; the report displays each write status.
+- `tq_exchange()` documentation: <https://business-science.github.io/tidyquant/reference/tq_index.html>
+- `tq_get()` documentation: <https://business-science.github.io/tidyquant/reference/tq_get.html>
+- `quantmod::getQuote()` source and field map: <https://github.com/joshuaulrich/quantmod/blob/main/R/getQuote.R>
+
+```{r}
+#| label: session-information
+#| code-fold: true
+#| code-summary: "Show session information"
+
+sessionInfo()
+```
+

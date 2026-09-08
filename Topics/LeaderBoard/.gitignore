@@ -1,0 +1,10 @@
+.Rhistory
+.RData
+.Rproj.user/
+renv/library/
+renv/staging/
+prototype/submissions/
+data/*.rds
+data/*.csv
+docs/*
+!docs/.gitkeep
