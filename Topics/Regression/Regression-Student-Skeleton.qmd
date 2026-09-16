@@ -1,0 +1,1184 @@
+---
+title: "Regression and the Cross-Section of Industry Returns"
+subtitle: "A Fama-MacBeth exercise with 48 industry portfolios"
+author: Mike Aguilar
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    embed-resources: true
+editor: visual
+execute:
+  warning: false
+  echo: true
+---
+
+# Background
+
+Q: Suppose you are an equity analyst. Your boss asking you to "run a factor analysis on these stocks".
+
+- Explain the concept of a "factor" in the equity markets.
+- Define the meaning of Mkt-RF, SMB, HML.
+- How use for investment analysis?
+
+A:
+
+## Architecture and notation
+
+We study the question using:
+
+- the monthly **Ken French 48 Industry Portfolios** as test assets; and
+- the monthly **Fama-French three factors**: market excess return, size, and value.
+
+The exercise has two main steps.
+
+1.  **Time-series regressions:** estimate each industry's factor exposures.
+2.  **Cross-sectional regressions:** estimate the return associated with each unit of factor exposure.
+
+This is an **asset-pricing exercise**, not a trading backtest. We use the full sample to estimate first-pass betas so that the mechanics are transparent. A genuinely investable exercise would estimate betas using only information available at each portfolio-formation date.
+
+The first-pass regression for industry $i$ is
+
+$$
+R_{i,t}-R_{f,t}
+=
+\alpha_i
++\beta_{i,MKT}(R_{M,t}-R_{f,t})
++\beta_{i,SMB}SMB_t
++\beta_{i,HML}HML_t
++\varepsilon_{i,t}.
+$$
+
+The first pass uses variation **through time** to estimate one set of exposures for each industry.
+
+The second-pass regression for month $t$ is
+
+$$
+R_{i,t}-R_{f,t}
+=
+\lambda_{0,t}
++\lambda_{MKT,t}\widehat\beta_{i,MKT}
++\lambda_{SMB,t}\widehat\beta_{i,SMB}
++\lambda_{HML,t}\widehat\beta_{i,HML}
++u_{i,t}.
+$$
+
+The second pass uses variation **across industries**. Repeating it each month produces a time series of estimated prices of risk, $\widehat\lambda_{k,t}$.
+
+| Quantity | Varies across | Interpretation |
+|------------------------|------------------------|------------------------|
+| Factor return, $F_{k,t}$ | Months | The realized factor payoff in month $t$ |
+| Factor beta, $\beta_{i,k}$ | Industries | Industry $i$'s sensitivity to factor $k$ |
+| Factor price, $\lambda_{k,t}$ | Months | Cross-sectional return associated with one unit of beta exposure in month $t$ |
+
+Q: What is the meaning of $\beta$?
+
+A:
+
+Q: What is the meaning of $\lambda$?
+
+A:
+
+# Housekeeping
+
+Task: Reset the R session, load the required packages, define the analysis settings, and create small formatting and regression helpers. Let's define "Banks" as the "focus" industry; i.e. the industry that we will use in this exercise to zoom in on and explore in more depth.
+
+```{r}
+#| label: setup
+
+cat("\014")
+rm(list = ls())
+
+required_packages <- c(
+  "tidyverse", "lubridate", "broom", "sandwich", "lmtest",
+  "gt", "scales", "zoo", "ggrepel"
+)
+
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(lubridate)
+  library(broom)
+  library(sandwich)
+  library(lmtest)
+  library(gt)
+  library(scales)
+  library(zoo)
+  library(ggrepel)
+})
+
+theme_set(theme_minimal(base_size = 12))
+
+settings <- list(
+  start_date = as.Date("1970-01-01"),
+  end_date = Sys.Date(),
+  focus_industry = "Banks",
+  nw_lag = 6,
+  refresh_data = FALSE,
+  data_dir = "data"
+)
+
+dir.create(settings$data_dir, showWarnings = FALSE, recursive = TRUE)
+
+pct <- function(x, accuracy = 0.01) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+ppts <- function(x, digits = 2) {
+  paste0(format(round(100 * x, digits), nsmall = digits), " ppts")
+}
+
+gt_compact <- function(data, title = NULL, subtitle = NULL) {
+  out <- gt(data)
+  if (!is.null(title)) {
+    out <- tab_header(out, title = title, subtitle = subtitle)
+  }
+  out |>
+    sub_missing(missing_text = "—") |>
+    cols_align(align = "center") |>
+    opt_row_striping()
+}
+
+robust_tidy <- function(model, vcov_matrix = sandwich::vcovHC(model, type = "HC1")) {
+  result <- broom::tidy(lmtest::coeftest(model, vcov. = vcov_matrix))
+  critical_value <- qt(0.975, df = df.residual(model))
+  result |>
+    mutate(
+      conf.low = estimate - critical_value * std.error,
+      conf.high = estimate + critical_value * std.error
+    )
+}
+
+calculate_vif <- function(data, regressors) {
+  map_dfr(regressors, function(target) {
+    other_regressors <- setdiff(regressors, target)
+    auxiliary_model <- lm(
+      reformulate(other_regressors, response = target),
+      data = data
+    )
+    auxiliary_r_squared <- summary(auxiliary_model)$r.squared
+
+    tibble(
+      variable = target,
+      auxiliary_r_squared = auxiliary_r_squared,
+      vif = 1 / (1 - auxiliary_r_squared)
+    )
+  })
+}
+```
+
+# Data
+
+## Download and parse
+
+The data come from the [Kenneth R. French Data Library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html). The source files report returns in percentage points; this exercise converts them to decimal returns.
+
+Task: Define helpers that download and extract the first monthly data block from a Ken French ZIP file.
+
+```{r}
+#| label: data-helpers
+
+download_if_needed <- function(url, destination, refresh = FALSE) {
+  if (refresh || !file.exists(destination)) {
+    download.file(url, destination, mode = "wb", quiet = TRUE)
+  }
+  invisible(destination)
+}
+
+read_first_monthly_block <- function(zip_path) {
+  member <- unzip(zip_path, list = TRUE)$Name[1]
+  connection <- unz(zip_path, member, open = "rt")
+  on.exit(close(connection), add = TRUE)
+  lines <- readLines(connection, warn = FALSE)
+
+  first_data_row <- which(str_detect(lines, "^\\s*\\d{6},"))[1]
+  header_candidates <- which(
+    seq_along(lines) < first_data_row &
+      str_detect(lines, "^\\s*,")
+  )
+  header_row <- max(header_candidates)
+
+  candidate_rows <- seq(first_data_row, length(lines))
+  first_nonmonthly <- which(
+    !str_detect(lines[candidate_rows], "^\\s*\\d{6},")
+  )[1]
+
+  last_data_row <- if (is.na(first_nonmonthly)) {
+    length(lines)
+  } else {
+    candidate_rows[first_nonmonthly] - 1
+  }
+
+  csv_text <- paste(
+    c(lines[header_row], lines[first_data_row:last_data_row]),
+    collapse = "\n"
+  )
+
+  readr::read_csv(
+    I(csv_text),
+    show_col_types = FALSE,
+    trim_ws = TRUE,
+    name_repair = "minimal"
+  )
+}
+```
+
+Task: Download the monthly Fama-French three-factor and 48-industry files, then extract their monthly value-weighted returns.
+
+```{r}
+#| label: download-data
+
+factor_url <- paste0(
+  "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/",
+  "F-F_Research_Data_Factors_CSV.zip"
+)
+
+industry_url <- paste0(
+  "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/",
+  "48_Industry_Portfolios_CSV.zip"
+)
+
+factor_zip <- file.path(settings$data_dir, "F-F_Research_Data_Factors_CSV.zip")
+industry_zip <- file.path(settings$data_dir, "48_Industry_Portfolios_CSV.zip")
+
+download_if_needed(factor_url, factor_zip, settings$refresh_data)
+download_if_needed(industry_url, industry_zip, settings$refresh_data)
+
+factor_raw <- read_first_monthly_block(factor_zip)
+industry_raw <- read_first_monthly_block(industry_zip)
+```
+
+Task: Clean the two data sets, convert percentage-point returns to decimals, and join them into an industry-month panel.
+
+```{r}
+#| label: clean-data
+
+names(factor_raw) <- str_trim(names(factor_raw))
+names(industry_raw) <- str_trim(names(industry_raw))
+
+factors <- factor_raw |>
+  rename(
+    date_code = 1,
+    MKT_RF = `Mkt-RF`
+  ) |>
+  mutate(
+    date = as.Date(paste0(date_code, "01"), format = "%Y%m%d"),
+    across(c(MKT_RF, SMB, HML, RF), ~ as.numeric(.x) / 100)
+  ) |>
+  select(date, MKT_RF, SMB, HML, RF) |>
+  filter(between(date, settings$start_date, settings$end_date))
+
+industries <- industry_raw |>
+  rename(date_code = 1) |>
+  mutate(date = as.Date(paste0(date_code, "01"), format = "%Y%m%d")) |>
+  select(-date_code) |>
+  pivot_longer(
+    cols = -date,
+    names_to = "industry",
+    values_to = "industry_return"
+  ) |>
+  mutate(
+    industry = str_trim(industry),
+    industry_return = as.numeric(industry_return),
+    industry_return = na_if(industry_return, -99.99),
+    industry_return = na_if(industry_return, -999),
+    industry_return = industry_return / 100
+  ) |>
+  filter(between(date, settings$start_date, settings$end_date))
+
+panel <- industries |>
+  inner_join(factors, by = "date") |>
+  mutate(excess_return = industry_return - RF) |>
+  drop_na(excess_return, MKT_RF, SMB, HML)
+
+data_overview <- tibble(
+  Item = c("First month", "Last month", "Months", "Industries", "Panel observations"),
+  Value = c(
+    format(min(panel$date), "%B %Y"),
+    format(max(panel$date), "%B %Y"),
+    n_distinct(panel$date),
+    n_distinct(panel$industry),
+    nrow(panel)
+  )
+)
+
+data_overview |>
+  gt_compact(title = "Analysis sample")
+```
+
+## Validate
+
+Task: Check for missing observations, duplicate industry-months, and an unbalanced panel.
+
+```{r}
+#| label: validate-data
+
+expected_months <- n_distinct(panel$date)
+
+validation <- bind_rows(
+  tibble(
+    check = "No missing model variables",
+    passed = !anyNA(panel |> select(excess_return, MKT_RF, SMB, HML)),
+    detail = paste(sum(!complete.cases(panel |> select(excess_return, MKT_RF, SMB, HML))), "incomplete rows")
+  ),
+  tibble(
+    check = "One observation per industry-month",
+    passed = !any(duplicated(panel[c("industry", "date")])),
+    detail = paste(sum(duplicated(panel[c("industry", "date")])), "duplicates")
+  ),
+  panel |>
+    dplyr::count(industry, name = "months") |>
+    summarise(
+      check = "Balanced industry panel",
+      passed = all(months == expected_months),
+      detail = paste(min(months), "to", max(months), "months per industry")
+    )
+)
+
+if (!all(validation$passed)) {
+  stop("At least one data-validation check failed.")
+}
+
+validation_table <- validation |>
+  mutate(Status = if_else(passed, "PASS", "FAIL")) |>
+  select(Check = check, Status, Detail = detail) |>
+  gt_compact(title = "Data validation")
+
+validation_table
+```
+
+Q: Why is a balanced panel especially useful when we compare the historical-average cross-sectional regression with the average of the monthly cross-sectional regressions?
+
+A:
+
+# Exploratory data analysis
+
+## Return distributions
+
+Task: Summarize the monthly factors and industry excess returns.
+
+```{r}
+#| label: summary-statistics
+
+factor_summary <- factors |>
+  select(MKT_RF, SMB, HML, RF) |>
+  pivot_longer(everything(), names_to = "series", values_to = "return") |>
+  group_by(series) |>
+  summarise(
+    observations = n(),
+    mean = mean(return),
+    volatility = sd(return),
+    minimum = min(return),
+    maximum = max(return),
+    .groups = "drop"
+  )
+
+industry_summary <- panel |>
+  group_by(industry) |>
+  summarise(
+    mean_excess_return = mean(excess_return),
+    volatility = sd(excess_return),
+    .groups = "drop"
+  )
+
+factor_summary_table <- factor_summary |>
+  mutate(across(c(mean, volatility, minimum, maximum), ~ pct(.x))) |>
+  rename(
+    Series = series,
+    Observations = observations,
+    Mean = mean,
+    Volatility = volatility,
+    Minimum = minimum,
+    Maximum = maximum
+  ) |>
+  gt_compact(title = "Monthly factor summary")
+
+factor_summary_table
+```
+
+## Correlations among first-pass regressors
+
+Task: Compute and visualize correlations among the three factor returns used as first-pass regressors.
+
+```{r}
+#| label: factor-correlations
+
+factor_correlations <- factors |>
+  select(MKT_RF, SMB, HML) |>
+  cor(use = "complete.obs")
+
+factor_correlation_table <- factor_correlations |>
+  as.data.frame() |>
+  rownames_to_column("Factor") |>
+  gt_compact(title = "Correlations among factor returns") |>
+  fmt_number(columns = where(is.numeric), decimals = 2)
+
+factor_correlation_plot <- factor_correlations |>
+  as.data.frame() |>
+  rownames_to_column("factor_x") |>
+  pivot_longer(-factor_x, names_to = "factor_y", values_to = "correlation") |>
+  ggplot(aes(factor_x, factor_y, fill = correlation)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = number(correlation, accuracy = 0.01)), size = 4) +
+  scale_fill_gradient2(
+    low = "#b2182b", mid = "white", high = "#2166ac",
+    midpoint = 0, limits = c(-1, 1)
+  ) +
+  labs(x = NULL, y = NULL, fill = "Correlation") +
+  coord_equal()
+
+factor_correlation_table
+
+factor_correlation_plot
+```
+
+Q: Interpret as it relates to our case study.
+
+A:
+
+## Variance inflation factors
+
+Task: Compute a VIF for each first-pass regressor. For each factor, regress it on the other two factors and use $VIF_k=1/(1-R_k^2)$.
+
+```{r}
+#| label: factor-vif
+
+factor_vif <- calculate_vif(
+  factors,
+  regressors = c("MKT_RF", "SMB", "HML")
+)
+
+factor_vif_table <- factor_vif |>
+  mutate(
+    interpretation = case_when(
+      vif > 10 ~ "Severe by the conventional rule of thumb",
+      vif > 5 ~ "Potentially concerning",
+      TRUE ~ "Limited inflation"
+    )
+  ) |>
+  rename(
+    Factor = variable,
+    `Auxiliary R-squared` = auxiliary_r_squared,
+    VIF = vif,
+    Interpretation = interpretation
+  ) |>
+  gt_compact(title = "First-pass variance inflation factors") |>
+  fmt_number(columns = c(`Auxiliary R-squared`, VIF), decimals = 2)
+
+factor_vif_table
+```
+
+Q: Any concerns?
+
+A:
+
+# Step 1: Estimate factor exposures
+
+## Fit 48 time-series regressions
+
+Task: Estimate one Fama-French three-factor time-series regression for each industry. Store each fitted model and compute heteroscedasticity-robust coefficient estimates.
+
+```{r}
+#| label: first-pass-models
+
+industry_models <- panel |>
+  select(?) |>
+  group_nest(industry) |>
+  mutate(
+    model = purrr::map(
+      data,
+      ~ ?, data = .x)
+    ),
+    coefficients = purrr::map(model, robust_tidy),
+    fit = purrr::map(model, broom::glance)
+  )
+
+first_pass_coefficients <- industry_models |>
+  select(industry, coefficients) |>
+  unnest(coefficients)
+
+first_pass_fit <- industry_models |>
+  select(industry, fit) |>
+  unnest(fit)
+```
+
+## Interpret one industry regression
+
+Task: Display conventional and heteroscedasticity-robust inference for the focus industry.
+
+```{r}
+#| label: focus-industry-inference
+
+if (!settings$focus_industry %in% industry_models$industry) {
+  settings$focus_industry <- sort(industry_models$industry)[1]
+}
+
+focus_model <- industry_models |>
+  filter(industry == settings$focus_industry) |>
+  pull(model) |>
+  pluck(1)
+
+focus_conventional <- broom::tidy(focus_model) |>
+  select(term, conventional_se = std.error, conventional_p = p.value)
+
+focus_robust <- robust_tidy(focus_model) |>
+  select(term, estimate, robust_se = std.error, robust_p = p.value, conf.low, conf.high)
+
+focus_inference <- focus_robust |>
+  left_join(focus_conventional, by = "term") |>
+  mutate(
+    term = recode(
+      term,
+      `(Intercept)` = "Alpha",
+      MKT_RF = "Market beta",
+      SMB = "SMB beta",
+      HML = "HML beta"
+    )
+  )
+
+focus_inference_table <- focus_inference |>
+  mutate(
+    across(
+      c(estimate, conventional_se, robust_se, conf.low, conf.high),
+      ~ if_else(term == "Alpha", 100 * .x, .x)
+    )
+  ) |>
+  rename(
+    Term = term,
+    Estimate = estimate,
+    `Conventional SE` = conventional_se,
+    `Conventional p-value` = conventional_p,
+    `Robust SE` = robust_se,
+    `Robust p-value` = robust_p,
+    `Robust CI low` = conf.low,
+    `Robust CI high` = conf.high
+  ) |>
+  gt_compact(
+    title = paste(settings$focus_industry, "first-pass regression"),
+    subtitle = "Alpha is shown in monthly percentage points; betas are unitless"
+  ) |>
+  fmt_number(columns = where(is.numeric), decimals = 3)
+
+focus_inference_table
+```
+
+Q: What is meant by the "robust" inference metrics?
+
+A:
+
+Q: Comment on the model's goodness of fit.
+
+A:
+
+Q: Interpret each coefficient in the focus-industry regression.
+
+A:
+
+## Heteroscedasticity diagnostic
+
+Task: Use the Breusch-Pagan test to examine whether the "focus" regression's residual variance is related to the factor regressors.
+
+```{r}
+#| label: breusch-pagan
+
+focus_bp_test <- lmtest::?(?)
+
+focus_bp_table <- broom::tidy(focus_bp_test) |>
+  select(statistic, parameter, p.value) |>
+  rename(
+    `BP statistic` = statistic,
+    `Degrees of freedom` = parameter,
+    `p-value` = p.value
+  ) |>
+  gt_compact(title = "Breusch-Pagan heteroscedasticity test") |>
+  fmt_number(columns = where(is.numeric), decimals = 4)
+
+focus_bp_table
+```
+
+Q: State the Breusch-Pagan null hypothesis. Evaluate. Why might we still prefer robust inference if the test does not reject?
+
+A:
+
+## Individual and joint tests
+
+Task: Conduct a robust joint test of whether all three factor slopes equal zero for the focus industry.
+
+```{r}
+#| label: joint-test
+
+focus_intercept_model <- ? data = model.frame(focus_model))
+
+focus_joint_test <- lmtest::?(
+  focus_intercept_model,
+  focus_model,
+  vcov = sandwich::vcovHC(focus_model, type = "HC1"),
+  test = "Chisq"
+)
+
+focus_joint_table <- broom::tidy(focus_joint_test) |>
+  gt_compact(
+    title = "Joint test of the three factor slopes",
+    subtitle = "H0: beta_MKT = beta_SMB = beta_HML = 0"
+  ) |>
+  fmt_number(columns = where(is.numeric), decimals = 4)
+
+focus_joint_table
+```
+
+Q: Interpret the results.
+
+A:
+
+Q: How does the joint test differ from the three individual slope tests?
+
+A:
+
+## Fitted values, residuals, and regression plots
+
+Task: Create a time-series plot of actual and fitted excess returns and a residual-versus-fitted plot for the focus industry.
+
+```{r}
+#| label: focus-regression-plots
+
+focus_diagnostics <- industry_models |>
+  filter(industry == settings$focus_industry) |>
+  transmute(
+    diagnostics = map2(
+      model,
+      data,
+      ~ broom::augment(.x, data = .y)
+    )
+  ) |>
+  unnest(diagnostics)
+
+actual_fitted_plot <- focus_diagnostics |>
+  select(date, Actual = excess_return, Fitted = .fitted) |>
+  pivot_longer(c(Actual, Fitted), names_to = "series", values_to = "return") |>
+  ggplot(aes(date, return, color = series)) +
+  geom_line(linewidth = 0.45, alpha = 0.85) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +
+  scale_color_manual(values = c(Actual = "black", Fitted = "#2166ac")) +
+  labs(
+    title = paste(settings$focus_industry, "actual and fitted excess returns"),
+    x = NULL, y = "Monthly excess return", color = NULL
+  )
+
+residual_fitted_plot <- focus_diagnostics |>
+  ggplot(aes(.fitted, .resid)) +
+  geom_hline(yintercept = 0, color = "grey50") +
+  geom_point(alpha = 0.45, color = "#2166ac") +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE, color = "#b2182b") +
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +
+  labs(
+    title = paste(settings$focus_industry, "residuals versus fitted values"),
+    x = "Fitted excess return", y = "Residual"
+  )
+
+actual_fitted_plot
+residual_fitted_plot
+```
+
+Q: What do the plots suggest?
+
+A:
+
+## Influential observations
+
+Task: Identify the five focus-industry months with the largest Cook's distances and label them on a diagnostic plot.
+
+```{r}
+#| label: influence-diagnostics
+
+influential_months <- focus_diagnostics |>
+  arrange(desc(?)) |>
+  slice_head(n = 5) |>
+  transmute(
+    Date = date,
+    `Actual excess return` = excess_return,
+    `Studentized residual` = .std.resid,
+    Leverage = .hat,
+    `Cook's distance` = ?
+  )
+
+influence_table <- influential_months |>
+  mutate(`Actual excess return` = pct(`Actual excess return`)) |>
+  gt_compact(title = paste("Most influential", settings$focus_industry, "months")) |>
+  fmt_number(columns = c(`Studentized residual`, Leverage, `Cook's distance`), decimals = 3)
+
+influence_plot <- focus_diagnostics |>
+  mutate(label = if_else(
+    date %in% influential_months$Date,
+    format(date, "%b %Y"),
+    NA_character_
+  )) |>
+  ggplot(aes(.hat, .std.resid, size = .cooksd)) +
+  geom_hline(yintercept = c(-2, 0, 2), linetype = c(2, 1, 2), color = "grey60") +
+  geom_point(alpha = 0.45, color = "#2166ac") +
+  geom_text_repel(aes(label = label), na.rm = TRUE, size = 3, max.overlaps = Inf) +
+  scale_size_continuous(range = c(1, 8)) +
+  labs(
+    title = paste(settings$focus_industry, "influence diagnostics"),
+    x = "Leverage", y = "Studentized residual", size = "Cook's distance"
+  )
+
+influence_table
+influence_plot
+```
+
+Q: What does the Cook's distance measure?
+
+A:
+
+Q: Should we delete the month with the largest Cook's distance?
+
+A:
+
+## Compare exposures across industries
+
+Task: Plot the estimated factor exposures and robust 95% confidence intervals for all 48 industries.
+
+```{r}
+#| label: beta-plot
+
+beta_plot <- first_pass_coefficients |>
+  filter(term != "(Intercept)") |>
+  mutate(
+    factor = recode(term, MKT_RF = "Market", SMB = "Size", HML = "Value"),
+    industry = fct_reorder(industry, estimate)
+  ) |>
+  ggplot(aes(estimate, industry)) +
+  geom_vline(xintercept = 0, color = "grey60") +
+  geom_errorbar(
+    aes(xmin = conf.low, xmax = conf.high),
+    width = 0,
+    color = "grey55",
+    orientation = "y"
+  ) +
+  geom_point(color = "#2166ac", size = 1.6) +
+  facet_wrap(~ factor, scales = "free_x", ncol = 3) +
+  labs(
+    title = "First-pass factor exposures by industry",
+    subtitle = "HC1 robust 95% confidence intervals",
+    x = "Estimated beta", y = NULL
+  ) +
+  theme(axis.text.y = element_text(size = 6))
+
+plotly::ggplotly(beta_plot)
+```
+
+Q: What do you notice about the range of exposures for the market risk factor in contrast to size and value? What's the implication?
+
+A:
+
+# Step 2A: Historical-average cross section
+
+## Estimate average prices of risk
+
+We first run one cross-sectional regression on the averages:
+
+$$
+\overline{R_i-R_f}
+=
+\lambda_0
++\lambda_{MKT}\widehat\beta_{i,MKT}
++\lambda_{SMB}\widehat\beta_{i,SMB}
++\lambda_{HML}\widehat\beta_{i,HML}
++\overline u_i.
+$$
+
+Task: Combine each industry's average excess return with its first-pass betas and estimate the historical-average cross-sectional regression.
+
+```{r}
+#| label: average-cross-section
+
+betas <- first_pass_coefficients |>
+  filter(term != "(Intercept)") |>
+  transmute(
+    industry,
+    term = recode(term, MKT_RF = "beta_mkt", SMB = "beta_smb", HML = "beta_hml"),
+    estimate
+  ) |>
+  pivot_wider(names_from = term, values_from = estimate)
+
+average_cross_section <- panel |>
+  group_by(industry) |>
+  summarise(average_excess_return = ?, .groups = "drop") |>
+  left_join(betas, by = "industry")
+
+average_pricing_model <- lm(
+  ?,
+  data = ?
+)
+
+average_pricing_inference <- robust_tidy(average_pricing_model)
+```
+
+Task: Display the estimated historical-average prices of risk with HC1 robust inference.
+
+```{r}
+#| label: average-prices-table
+
+average_pricing_table <- average_pricing_inference |>
+  mutate(
+    term = recode(
+      term,
+      `(Intercept)` = "Zero-beta return",
+      beta_mkt = "Market",
+      beta_smb = "Size",
+      beta_hml = "Value"
+    ),
+    across(c(estimate, std.error, conf.low, conf.high), ~ 100 * .x)
+  ) |>
+  select(term, estimate, std.error, statistic, p.value, conf.low, conf.high) |>
+  rename(
+    Term = term,
+    `Estimate (monthly ppts)` = estimate,
+    `Robust SE` = std.error,
+    `t-statistic` = statistic,
+    `p-value` = p.value,
+    `CI low` = conf.low,
+    `CI high` = conf.high
+  ) |>
+  gt_compact(
+    title = "Historical-average cross-sectional regression",
+    subtitle = "48 industry portfolios; HC1 robust inference"
+  ) |>
+  fmt_number(columns = where(is.numeric), decimals = 3)
+
+average_pricing_table
+```
+
+Q: Interpret the coefficient on size.
+
+A:
+
+Q: What does a statistically insignificant price of risk mean?
+
+A:
+
+## Correlations and VIFs among estimated betas
+
+Task: Examine correlations and VIFs among the estimated betas used as second-pass regressors.
+
+```{r}
+#| label: beta-collinearity
+
+beta_correlations <- average_cross_section |>
+  select(beta_mkt, beta_smb, beta_hml) |>
+  cor()
+
+beta_correlation_table <- beta_correlations |>
+  as.data.frame() |>
+  rownames_to_column("Beta") |>
+  gt_compact(title = "Correlations among estimated industry betas") |>
+  fmt_number(columns = where(is.numeric), decimals = 2)
+
+beta_vif <- calculate_vif(
+  average_cross_section,
+  regressors = c("beta_mkt", "beta_smb", "beta_hml")
+)
+
+beta_vif_table <- beta_vif |>
+  rename(
+    Beta = variable,
+    `Auxiliary R-squared` = auxiliary_r_squared,
+    VIF = vif
+  ) |>
+  gt_compact(title = "Second-pass variance inflation factors") |>
+  fmt_number(columns = c(`Auxiliary R-squared`, VIF), decimals = 2)
+
+beta_correlation_table
+beta_vif_table
+```
+
+Q: Why do we calculate a second set of correlations and VIFs?
+
+A:
+
+Q: Interpret the results.
+
+A:
+
+## Plot the cross-sectional regression
+
+With three beta regressors, the fitted relation is a hyperplane rather than a line. We therefore plot fitted against actual average returns.
+
+Task: Plot each industry's actual average excess return against its fitted value and label the most poorly priced industries.
+
+```{r}
+#| label: cross-sectional-plot
+
+average_diagnostics <- broom::augment(
+  average_pricing_model,
+  data = average_cross_section
+) |>
+  mutate(
+    absolute_pricing_error = ?,
+    label = if_else(
+      min_rank(desc(absolute_pricing_error)) <= 6,
+      industry,
+      NA_character_
+    )
+  )
+
+# coord_equal() below scales the panel so that fitted returns
+# (a narrow range) and actual returns (a wider range) share one axis
+# unit; giving both scales the same limits keeps the panel from
+# collapsing into a tall, narrow strip.
+pricing_error_range <- range(
+  c(average_diagnostics$.fitted, average_diagnostics$average_excess_return)
+)
+
+average_cross_section_plot <- ggplot(
+  average_diagnostics,
+  aes(.fitted, average_excess_return)
+) +
+  geom_abline(slope = 1, intercept = 0, color = "grey50", linetype = 2) +
+  geom_point(color = "#2166ac", size = 2) +
+  geom_text_repel(aes(label = label), na.rm = TRUE, size = 3, max.overlaps = Inf) +
+  scale_x_continuous(limits = pricing_error_range, labels = label_percent(accuracy = 0.01)) +
+  scale_y_continuous(limits = pricing_error_range, labels = label_percent(accuracy = 0.01)) +
+  labs(
+    title = "Actual versus model-implied average excess returns",
+    subtitle = "Labels identify the six largest absolute pricing errors",
+    x = "Fitted average monthly excess return",
+    y = "Actual average monthly excess return"
+  ) +
+  coord_equal()
+
+average_cross_section_plot
+```
+
+Q: What does a point above the 45-degree line represent?
+
+A:
+
+# Step 2B: Month-by-month Fama-MacBeth regressions
+
+## Estimate monthly prices of risk
+
+Task: Attach the fixed first-pass betas to every industry-month and estimate one cross-sectional regression in each month.
+
+```{r}
+#| label: monthly-cross-sections
+
+monthly_pricing_data <- panel |>
+  select(date, industry, excess_return) |>
+  left_join(betas, by = "industry")
+
+monthly_pricing_models <- ? |>
+  group_nest(date) |>
+  mutate(
+    model = purrr::map(
+      data,
+      ~ ?, data = .x)
+    ),
+    coefficients = purrr::map(model, broom::tidy),
+    fit = purrr::map(model, broom::glance)
+  )
+
+lambda_time_series <- monthly_pricing_models |>
+  select(date, coefficients) |>
+  unnest(coefficients) |>
+  select(date, term, estimate)
+```
+
+Task: For each coefficient, estimate its time-series mean and a Newey-West standard error for that mean.
+
+```{r}
+#| label: fama-macbeth-inference
+
+fama_macbeth_summary <- lambda_time_series |>
+  group_by(term) |>
+  group_modify(~ {
+    mean_model <- lm(estimate ~ ?, data = .x)
+    nw_variance <- sandwich::?(
+      mean_model,
+      lag = settings$nw_lag,
+      prewhite = FALSE,
+      adjust = TRUE
+    )
+    mean_estimate <- unname(coef(mean_model)[1])
+    standard_error <- sqrt(nw_variance[1, 1])
+    t_statistic <- mean_estimate / standard_error
+
+    tibble(
+      months = nrow(.x),
+      mean = mean_estimate,
+      nw_se = standard_error,
+      t_statistic = t_statistic,
+      p_value = 2 * pt(-abs(t_statistic), df = nrow(.x) - 1),
+      conf_low = mean_estimate - qt(0.975, df = nrow(.x) - 1) * standard_error,
+      conf_high = mean_estimate + qt(0.975, df = nrow(.x) - 1) * standard_error
+    )
+  }) |>
+  ungroup()
+
+fama_macbeth_table <- fama_macbeth_summary |>
+  mutate(
+    term = recode(
+      term,
+      `(Intercept)` = "Zero-beta return",
+      beta_mkt = "Market price",
+      beta_smb = "Size price",
+      beta_hml = "Value price"
+    ),
+    across(c(mean, nw_se, conf_low, conf_high), ~ 100 * .x)
+  ) |>
+  rename(
+    Term = term,
+    Months = months,
+    `Mean monthly price (ppts)` = mean,
+    `Newey-West SE` = nw_se,
+    `t-statistic` = t_statistic,
+    `p-value` = p_value,
+    `CI low` = conf_low,
+    `CI high` = conf_high
+  ) |>
+  gt_compact(
+    title = "Fama-MacBeth estimates",
+    subtitle = paste("Newey-West inference for mean monthly prices; lag =", settings$nw_lag)
+  ) |>
+  fmt_number(columns = where(is.numeric), decimals = 3)
+
+fama_macbeth_table
+```
+
+Q: What is being tested in the Fama-MacBeth table? Interpret the results.
+
+A:
+
+## Compare the two second-pass approaches
+
+Task: Compare coefficients from the historical-average cross section with the means of the monthly cross-sectional coefficients.
+
+```{r}
+#| label: compare-second-pass
+
+second_pass_comparison <- average_pricing_inference |>
+  select(term, historical_average_coefficient = estimate) |>
+  left_join(
+    fama_macbeth_summary |>
+      select(term, mean_monthly_coefficient = mean),
+    by = "term"
+  ) |>
+  mutate(
+    difference = ?,
+    across(c(historical_average_coefficient, mean_monthly_coefficient, difference), ~ 100 * .x),
+    term = recode(
+      term,
+      `(Intercept)` = "Zero-beta return",
+      beta_mkt = "Market price",
+      beta_smb = "Size price",
+      beta_hml = "Value price"
+    )
+  )
+
+second_pass_comparison_table <- second_pass_comparison |>
+  rename(
+    Term = term,
+    `Average-return regression (ppts)` = historical_average_coefficient,
+    `Mean monthly coefficient (ppts)` = mean_monthly_coefficient,
+    `Difference (ppts)` = difference
+  ) |>
+  gt_compact(title = "Two ways to obtain average prices of risk") |>
+  fmt_number(columns = where(is.numeric), decimals = 8)
+
+second_pass_comparison_table
+```
+
+Q: If the point estimates are effectively identical, why run the month-by-month regressions?
+
+A:
+
+## Plot prices of risk through time
+
+Task: Plot each monthly price of risk and its trailing 12-month average.
+
+```{r}
+#| label: lambda-time-series-plot
+
+lambda_plot_data <- lambda_time_series |>
+  group_by(term) |>
+  arrange(date, .by_group = TRUE) |>
+  mutate(
+    trailing_12_month_mean = zoo::rollmean(
+      estimate,
+      k = 12,
+      fill = NA,
+      align = "right"
+    ),
+    term = recode(
+      term,
+      `(Intercept)` = "Zero-beta return",
+      beta_mkt = "Market price",
+      beta_smb = "Size price",
+      beta_hml = "Value price"
+    )
+  ) |>
+  ungroup()
+
+lambda_time_series_plot <- ggplot(lambda_plot_data, aes(date, estimate)) +
+  geom_hline(yintercept = 0, color = "grey55") +
+  geom_line(alpha = 0.22, linewidth = 0.35, color = "grey35") +
+  geom_line(aes(y = trailing_12_month_mean), color = "#2166ac", linewidth = 0.7) +
+  facet_wrap(~ term, scales = "free_y", ncol = 2) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +
+  labs(
+    title = "Monthly prices of risk",
+    subtitle = "Grey: monthly estimate; blue: trailing 12-month mean",
+    x = NULL, y = "Monthly price of risk"
+  )
+
+lambda_time_series_plot
+```
+
+Q: Why can a factor have a positive average price of risk even though its estimated monthly price is often negative?
+
+A:
+
+# Extension: Do prices of risk change in recessions?
+
+We use the monthly NBER recession indicator distributed by FRED as `USREC`. For each estimated price of risk, we fit
+
+$$
+\widehat\lambda_{k,t}=\delta_{0,k}+\delta_{1,k}Recession_t+v_{k,t}.
+$$
+
+Q: How interpret the $\delta_{0,k}$ and $\delta_{1,k}$?
+
+A:
+
+Q: Why can we not add `recession` directly to each month's cross-sectional regression?
+
+A:
+
+Q: Interpret a positive and statistically significant recession coefficient for the market price of risk.
+
+A:
+
+# Synthesis
+
+Q: Can the first-pass market beta be statistically significant for nearly every industry while the second-pass market price of risk is statistically insignificant?
+
+A:
+
+Q: What are the main limitations of this exercise?
+
+A:
+
+## Investment Implications
+
+Q: How use these results to inform your investment decisions?
+
+A:
