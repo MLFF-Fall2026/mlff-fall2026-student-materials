@@ -1,0 +1,6 @@
+team,effective_matrix,matrix_date,effective_date,latest_attempt_status,latest_attempt_message,market_data_status,market_data_warning
+NorthStarLong,PositionMatrix-2025-11-28-NorthStarLong.csv,2025-11-28,2025-12-01,valid,Valid submission,ok,NA
+MarketNeutralLab,PositionMatrix-2025-11-28-MarketNeutralLab.csv,2025-11-28,2025-12-01,valid,Valid submission,ok,NA
+LeveredMomentum,PositionMatrix-2025-11-28-LeveredMomentum.csv,2025-11-28,2025-12-01,valid,Valid submission,ok,NA
+DefensiveCarry,PositionMatrix-2025-11-28-DefensiveCarry.csv,2025-11-28,2025-12-01,valid,Valid submission,ok,NA
+ActiveRotation,PositionMatrix-2025-11-28-ActiveRotation.csv,2025-11-28,2025-12-01,valid,Valid submission,ok,NA

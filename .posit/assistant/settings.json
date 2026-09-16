@@ -1,7 +1,35 @@
 {
   "permission": {
     "edit": {
-      "*.R": "allow"
+      "*.R": "allow",
+      "*.md": "allow",
+      "*.qmd": "allow"
+    },
+    "executeCode": {
+      "*": "allow"
+    },
+    "bash": {
+      "cd *": "allow",
+      "pwd *": "allow",
+      "find *": "allow",
+      "Rscript *": "allow",
+      "tail *": "allow",
+      "quarto render *": "allow",
+      "git mv *": "allow",
+      "echo *": "allow",
+      "ls *": "allow",
+      "sed *": "allow",
+      "mkdir *": "allow",
+      "cp *": "allow",
+      "f=\"Topics/MomentumStrategy2/SP500-Momentum-Strategy-Instructor.qmd\" *": "allow",
+      "grep *": "allow",
+      "awk *": "allow"
+    },
+    "external_directory": {
+      "c:/Users/mda3/Downloads/*": "allow"
+    },
+    "skill": {
+      "positron-commands": "allow"
     }
   }
 }
