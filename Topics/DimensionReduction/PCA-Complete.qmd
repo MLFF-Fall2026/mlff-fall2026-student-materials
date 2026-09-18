@@ -1,0 +1,834 @@
+---
+title: "PCA (Principal Component Analysis)"
+author: Mike Aguilar
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute:
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| warning: FALSE
+
+cat("\014")  # clear console
+rm(list = ls())  # clear the workspace
+if (!requireNamespace("here", quietly = TRUE)) install.packages("here")
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "ProjectSetup.R"))
+```
+
+# Background
+
+- You are an investment analyst at a global asset-management firm.
+- The firm allocates capital across country equity markets using country equity ETFs.
+- You monitor many macroeconomic and equity-market indicators for every country.
+- The investment team wants a small number of measures summarizing each country's conditions.
+- Can we reduce many correlated indicators into only a few informative dimensions?
+- We will focus on PCA as our dimension reduction technique.
+- The resulting component scores help us compare countries, screen markets, and monitor exposures. PCA is not itself a trading strategy: a high score is not inherently good or bad, and the components do not mechanically prescribe which ETFs to buy.
+- The data includes macroeconomic and equity-market indicators for a universe of fictional investable countries.
+
+# Data
+
+## Acquisition
+
+Task: Load the data dictionary from the Data_Dictionary sheet of country_equity_indicators.xlsx.
+
+```{r}
+data_dictionary <- read_excel(
+  here("data", "country_equity_indicators.xlsx"),
+  sheet = "Data_Dictionary"
+)
+  data_dictionary
+```
+
+Q: Before doing any quantitative analysis, which variables do you suspect to be related to each other?
+
+A:
+
+- Growth & Momentum: GDP Growth, Industrial Production Growth, Earnings Growth, Equity Momentum
+- Valuation: Forward P/E, Price-to-Book, Dividend Yield (likely opposite in direction to the first two)
+- Risk: Equity Volatility, FX Volatility, Inflation, Sovereign Risk Spread
+
+Task: Load data file country_equity_indicators.xlsx from the Data sheet.
+
+```{r}
+country_data <- read_excel(
+  here("data", "country_equity_indicators.xlsx"),
+  sheet = "Data"
+)
+```
+
+## Cleaning
+
+Task: Check for missing values
+
+```{r}
+sum(is.na(country_data))
+```
+
+## Engineering
+
+Task: Standardize the data using "scale"
+
+```{r}
+country_data_standardized <- scale(country_data %>% select(-country_code)) %>%
+    as.data.frame() %>%
+    mutate(country_code = country_data$country_code) %>%
+    select(country_code, everything())
+```
+
+Task: Convert country_data to a long dataframe. Then compute the mean and standard deviation of each variable.
+
+```{r}
+country_data%>%
+    pivot_longer(-country_code, names_to = "variable", values_to = "value") %>%
+    group_by(variable) %>%
+    summarise(mean = mean(value), sd = sd(value))
+```
+
+Task: Convert country_data_standardized to a long dataframe. Then compute the mean and standard deviation of each variable.
+
+```{r}
+country_data_standardized%>%
+    pivot_longer(-country_code, names_to = "variable", values_to = "value") %>%
+    group_by(variable) %>%
+    summarise(mean = mean(value), sd = sd(value))
+
+```
+
+Q: What do these summaries suggest?
+
+A:
+
+The standardization did indeed work across the variables.
+
+## EDA
+
+Let's focus on the comovement for this exercise.
+
+### Compute correlation matrix
+
+Task: Compute the correlation matrix among the indicators
+
+```{r}
+correlation_matrix <- cor(country_data_standardized %>% select(-country_code))
+correlation_matrix
+```
+
+Q: Which indicators are candidates for consolidation?
+
+A:
+
+- GDP Growth, Industrial Production Growth, Earnings Growth, and Equity Momentum
+- Forward P/E, Price-to-Book, and Dividend Yield (with Dividend Yield moving opposite to the two ratios)
+- Equity Volatility, FX Volatility, Inflation, and Sovereign Risk Spread
+
+### Visualize the correlation matrix
+
+Task: Create a heatmap of the correlation matrix.
+
+```{r}
+melted_corr <- melt(correlation_matrix)
+
+ggplot(melted_corr, aes(Var1, Var2, fill = value)) +
+ geom_tile() +
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, 
+                      limit = c(-1, 1), name = "Correlation") +
+ scale_y_discrete(limits = rev(levels(melted_corr$Var2))) +
+ labs(title = "Correlation Matrix Heatmap", x = NULL, y = NULL) +
+ theme_minimal() +
+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Visualize pairwise plots
+
+Task: Generate pairwise plots for all indicators
+
+```{r}
+ggpairs(country_data_standardized %>% select(-country_code))
+```
+
+Q: What does the pairs plot suggest?
+
+A:
+
+- There is a strong relationship within groups of variables.
+- Consider the growth block: GDP Growth, Industrial Production Growth, Earnings Growth, and Equity Momentum are all very tightly, positively related.
+- The valuation block shows Forward P/E and Price-to-Book moving together, while Dividend Yield moves in the opposite direction.
+- The risk block (Equity Volatility, FX Volatility, Inflation, Sovereign Risk Spread) also moves tightly together.
+- Across the three blocks, however, the scatter is essentially random, which suggests the blocks capture distinct dimensions.
+
+# Implementing PCA
+
+Q: What is our analytical goal for this case study? How might PCA help?
+
+A:
+
+- PCA: Principal Component Analysis
+- PCA reduces dimensionality by identifying the dominant patterns of variation in the data.
+- It looks for directions where the data varies the most and treats those directions as new, orthogonal axes.
+- These directions, the principal components, capture the strongest shared structure in the dataset.
+- PCA solves the eigenvalue problem $\Sigma v_i = \lambda_i v_i$, where $\Sigma$ is the covariance (or correlation) matrix.
+- $\lambda_i$ is the **eigenvalue** associated with component $i$. It equals the variance captured by that component.
+- $v_i$ is the corresponding **eigenvector**. It gives the direction of the $i^{th}$ principal component.
+- The elements of $v_i$ are the **loadings**. They are the weights used to combine the original variables to construct the principal component.
+- The $i^{th}$ **principal component** is the new variable $PC_i = Xv_i$, where $X$ is the centered data matrix (or standardized data matrix when PCA is performed on standardized variables).
+- The **score** for observation $j$ on principal component $i$ is $PC_{ji} = x_j'v_i$. Thus, the score tells us where observation $j$ lies along the dimension represented by principal component $i$.
+
+Task: Run PCA on the raw indicators using prcomp
+
+```{r}
+pca_raw <- prcomp(country_data %>% select(-country_code), scale. = FALSE)
+```
+
+Task: Run the summary command on the PCA object.
+
+```{r}
+summary(pca_raw)
+```
+
+Q: Can you interpret the output?
+
+A:
+
+- The columns for the principal components.
+- Standard deviation: This is the standard deviation of the data projected onto each principal component. Squaring this value gives the variance (eigenvalue) explained by that component.
+- Proportion of Variance: The fraction of the total variance explained by each principal component. For example, if PC1 has a proportion of variance of 1, then PC1 alone explains 100% of the total variation in the original variables. (More on this soon)
+- Cumulative Proportion: The total proportion of variance explained by the first k principal components. This helps determine how many components are needed to adequately summarize the data.
+
+Q: Why are 11 PCs listed?
+
+A:
+
+- PCA reduces the dimensions of the original dataset.
+- The country_data has 11 indicators, so PCA generates 11 principal components.
+- Notice that this does not by itself reduce the dimension. It's our job to choose how many PCs are sufficient to explain the variation in the data, which we will do soon.
+
+# Why is standardizing important?
+
+Task: Run pca on the standardized data
+
+```{r}
+pca_z <- prcomp(country_data_standardized %>% select(-country_code), scale. = FALSE)
+```
+
+Task: Summarize that pca with the summary command
+
+```{r}
+summary(pca_z)
+```
+
+Task: Re-estimate on country_data (not standardized data), but set scale. = TRUE
+
+```{r}
+pca_z2 <- prcomp(country_data%>% select(-country_code), scale. = TRUE)
+summary(pca_z2)
+```
+
+Q: Coding implication?
+
+A:
+
+We can either run PCA on the standardized data or on the raw with the scale set to TRUE
+
+Task: Compare the PC1 loadings for the country indicators using raw vs. standardized data, the same way we did for the toy example.
+
+```{r}
+country_loadings <- bind_rows(
+  tibble(variable = names(pca_raw$rotation[, 1]), loading = pca_raw$rotation[, 1], version = "Raw"),
+  tibble(variable = names(pca_z$rotation[, 1]), loading = pca_z$rotation[, 1], version = "Standardized")
+)
+
+ggplot(country_loadings, aes(variable, loading)) +
+  geom_col() +
+  facet_wrap(~version) +
+  labs(
+    title = "Country indicators: PC1 loadings, raw vs. standardized",
+    x = NULL, y = "PC1 loading"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Q: Which indicators dominate the raw PC1? Do they still dominate once standardized?
+
+A:
+
+- On the raw data, PC1 loads almost entirely on Sovereign_Risk_Spread_Bps (loading near -1), with every other indicator near zero. This makes sense because the sovereign spread is measured in basis points and its numerical scale (standard deviation \~150) dwarfs every other indicator.
+- Once we standardize, PC1 no longer tracks that single large-scale variable. Instead it reflects the shared risk block (Equity Volatility, FX Volatility, Inflation, Sovereign Risk Spread), which now load together at comparable magnitudes (\~0.46 each), with a smaller secondary contribution from the valuation indicators.
+- The lesson: covariance-based PCA is driven by the units/scale of the variables, so standardizing first is essential when indicators are measured on very different scales.
+
+# Choosing the number of components
+
+Q: Our goal is to reduce the dimension of the data. Based on the summary information above, how many principal components do you think we should use?
+
+A:
+
+- If we reduce down to one principal component, we can explain approximately 38% of the variation in the dataset.
+- If we reduce down to two principal components, we can explain approximately 74% of the variation in the dataset.
+- Three principal components explain approximately 99% of the variation.
+- There is a tradeoff between dimension reduction and explanatory power. It appears the gain from reducing beyond 3 components is quite small.
+- Let's see if we can formalize that process.
+
+Task: Construct Scree Plot plotting "plot" pca_z.
+
+```{r}
+plot(pca_z, type = "line")
+```
+
+Q: Interpret?
+
+A:
+
+- It appears that 3 PCs should be sufficient.
+- The rule of thumb is to look for the "elbow" where the curve flattens and pick the \# of PCs before that point. Here the variance drops sharply after the third component.
+
+Note that the PCA method transforms the covariance matrix of the data by rescaling into principal component vectors, which explain the maximum variation in the data. We solve $\Sigma v_{i}=\lambda_{i}v_{i}$ for each PC $(i)$, where $\lambda_{i}$ is the $i^{th}$ eigenvalue and $v_{i}$ is the $i^{th}$ eigenvector aka principal component.
+
+Task: Impose the Kaiser Criterion; i.e. keep all PCs with eigenvalues \> 1.
+
+```{r}
+eigenvalues <- pca_z$sdev^2
+kaiser <- data.frame(
+  Component = paste0("PC", seq_along(eigenvalues)),
+  Eigenvalue = eigenvalues,
+  Retain = eigenvalues > 1
+)
+
+kaiser
+```
+
+Q: How many PCs are suggested?
+
+A:
+
+3
+
+Q: How many PCs are needed if want to explain 60% of variance? 75%? 90%?
+
+A:
+
+```{r}
+summary(pca_z)
+```
+
+- Note that we need 2 PCs to explain at least 60% of the variation in the data (the first two explain \~74%).
+- We need 3 PCs to explain at least 75%, because the first two reach only \~74%.
+- We also need a third PC to explain at least 90% (the first three reach \~99%).
+
+# Interpreting PCA
+
+## Loadings
+
+Task: Plot the loadings for PC1, PC2, PC3.
+
+```{r}
+pc1_order <- names(sort(abs(pca_z$rotation[, 1]), decreasing = TRUE))
+
+pc_loadings <- as_tibble(pca_z$rotation[, 1:3], rownames = "variable") %>%
+  pivot_longer(-variable, names_to = "PC", values_to = "loading") %>%
+  mutate(
+    PC = factor(PC, levels = c("PC1", "PC2", "PC3")),
+    # Order indicators by |PC1 loading| so all facets share the same x-axis order
+    variable = factor(variable, levels = pc1_order)
+  )
+
+ggplot(pc_loadings, aes(variable, loading)) +
+  geom_col() +
+  facet_wrap(~PC, ncol = 1) +
+  labs(title = "PCA loadings for PC1, PC2, PC3", x = NULL, y = "Loading") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Q: Interpret the loading vector values.
+
+A:
+
+- The loadings are the weights applied to the original variables when constructing each principal component.
+- The magnitude of a loading indicates how strongly a variable contributes to that component. Larger absolute loadings imply a stronger contribution.
+- The overall sign of a principal component is arbitrary: multiplying all of its loadings by $-1$ produces an equivalent principal component.
+- However, the relative signs of the loadings within a component are meaningful. Variables with the same sign move together along that component, while variables with opposite signs move in opposite directions.
+- We therefore use both the magnitude and the relative signs of the largest loadings to interpret the economic meaning of each component.
+- PC1 appears primarily related to market and macroeconomic risk. Equity Volatility, FX Volatility, Inflation, and Sovereign Risk Spread all load strongly in the same direction, with a smaller secondary contribution from the valuation indicators.
+- PC2 appears to capture growth and equity momentum. GDP Growth, Industrial Production Growth, Earnings Growth, and Equity Momentum all have large loadings in the same direction.
+- PC3 appears to capture equity valuation. Forward P/E and Price-to-Book load strongly in one direction, while Dividend Yield loads strongly in the opposite direction—consistent with a contrast between expensive and inexpensive equity markets.
+
+## Scores
+
+Q: What is a PCA score? Contrast with a loading.
+
+A:
+
+- The loadings tell us how the original variables are combined to define a principal component.
+- The scores tell us where each observation, in this case, each country, falls on that principal component.
+- A score is calculated by taking the standardized values for a country and weighting them by the loadings for that principal component.
+- For PC1, $Score_{i,PC1} = z_{i1}v_{1,PC1}+z_{i2}v_{2,PC1}+\cdots+z_{ip}v_{p,PC1}$, where $z_{ij}$ is the standardized value of variable $j$ for country $i$, and $v_{j,PC1}$ is the PC1 loading for that variable.
+- Loadings tell us what the component represents; scores tell us where each country lies on that component.
+
+Task: Extract the PC1 score for the first country from the pca_z object
+
+```{r}
+pca_z$x[1, 1]
+```
+
+Task: Recreate that PC1 score as a weighted sum of the loadings.
+
+```{r}
+ctry001 <- country_data_standardized %>%
+  filter(country_code == "CTRY001") %>%
+  select(-country_code) %>%
+  unlist()
+
+pc1_loadings <- pca_z$rotation[, 1]
+
+sum(ctry001 * pc1_loadings)
+```
+
+Q: How do we interpret the score in our context?
+
+A:
+
+- Recall that PC1 is our market and macroeconomic risk dimension, and the risk indicators (Equity Volatility, FX Volatility, Inflation, Sovereign Risk Spread) load positively on PC1.
+- The negative PC1 score for CTRY001 therefore implies that CTRY001 is associated with relatively lower risk than the average country: lower volatility, lower inflation, and a tighter sovereign spread.
+- PC1 also carries a smaller secondary valuation contribution. Forward P/E and Price-to-Book load positively on PC1 while Dividend Yield loads negatively, so a negative PC1 score is also associated with somewhat cheaper valuation and higher dividend yield than the average country.
+- Caution: this colloquial interpretation is technically somewhat strong. Since a PC score is a weighted combination of all the variables, a negative PC1 score does not guarantee that every positive-loading variable is below average and every negative-loading variable is above average. For example, CTRY001 could have above-average inflation but sufficiently low volatility and sovereign spread to still generate a negative PC1 score.
+- To interpret magnitudes we can either standardize the score by the standard deviation of the principal component, or (more common) interpret on a relative basis.
+
+Task: Extract the PC1 score for the second, third, and fourth countries
+
+```{r}
+pca_z$x[2:4, 1]
+```
+
+Q: What's the interpretation of the sign and magnitude of these PC1 scores relative to CTRY001?
+
+A:
+
+- CTRY002 has a positive PC1 score, implying it is associated with above-average risk (higher volatility, inflation, and sovereign spread) relative to the average country, and thus higher risk than CTRY001.
+- CTRY003 and CTRY004 have negative PC1 scores like CTRY001, implying below-average risk.
+- The magnitudes vary.
+  - CTRY003 is modestly below average, similar in spirit to CTRY001.
+  - CTRY004 has a much larger negative score, implying markedly lower risk than CTRY001.
+- Note: The same technical caution from above applies here.
+
+## Reconstruction
+
+The goal of dimension reduction is to represent the original data using fewer dimensions while retaining as much information as possible.
+
+This creates a tradeoff. If we retain all principal components, we lose no information, but we achieve no dimension reduction. If we retain only a few principal components, we obtain a simpler representation but lose some information about the original data.
+
+We can quantify this tradeoff by asking: How accurately can the retained PCs reconstruct the original data?
+
+Q: How reconstruct the data from the PCA?
+
+A:
+
+- $N$ observations; $p$ variables; $k$ PCs
+- $L_{k}$ is $(p \times k)$: loading for first k PC's retained
+- $S_{k}$ is $(N \times k)$: scores for first $k$ PCs
+- $\hat{Z}_{k}$ is $(N \times p)$ recreation of the standardized data
+- $\hat{Z}_{k}=S_{k}L_{k}'$
+
+Task: Create a function that reconstructs the data via scores times loadings.
+
+```{r}
+original <- country_data_standardized %>% select(-country_code) %>% as.matrix()
+
+reconstruct <- function(pca, k) {
+  scores <- pca$x[, 1:k, drop = FALSE]
+  loadings <- pca$rotation[, 1:k, drop = FALSE]
+  recon <- scores %*% t(loadings)
+  sweep(recon, 2, pca$center, "+")
+}
+```
+
+Task: Reconstruct the data using only the first principal component.
+
+```{r}
+reconstruction_1pc <- reconstruct(pca_z, 1)
+head(reconstruction_1pc)
+```
+
+Task: Compute the mean squared reconstruction error
+
+```{r}
+error_1pc <- mean((original - reconstruction_1pc)^2)
+error_1pc
+```
+
+Task: Reconstruct the data using only the first and second principal components.
+
+```{r}
+reconstruction_2pc <- reconstruct(pca_z, 2)
+head(reconstruction_2pc)
+```
+
+Task: Compute the mean squared reconstruction error
+
+```{r}
+error_2pc <- mean((original - reconstruction_2pc)^2)
+error_2pc
+```
+
+Task: Reconstruct the data using only the first, second, and third principal components.
+
+```{r}
+reconstruction_3pc <- reconstruct(pca_z, 3)
+head(reconstruction_3pc)
+```
+
+Task: Compute the mean squared reconstruction error
+
+```{r}
+error_3pc <- mean((original - reconstruction_3pc)^2)
+error_3pc
+```
+
+```{r}
+tibble(
+  `# PCs used` = 1:3,
+  `Reconstruction error (MSE)` = c(error_1pc, error_2pc, error_3pc)
+)
+```
+
+Q: Why not always use all PCs?
+
+A:
+
+- Using all PCs reproduces the original standardized data exactly (apart from numerical rounding), but it provides no dimension reduction. If we begin with 11 indicators and retain 11 PCs, we still have 11 dimensions.
+- The purpose of PCA is therefore not to minimize reconstruction error alone. It is to find a small number of PCs that preserve enough of the important variation in the data for our application.
+- Retaining fewer PCs creates a tradeoff: we accept some reconstruction error in exchange for a simpler representation of the data.
+- Later PCs explain progressively less of the total variation. We therefore ask whether the additional information captured by another PC is worth the additional dimension.
+- There is no universal cutoff. We can use variance explained, a scree plot, reconstruction error, interpretability, and ultimately the purpose of the analysis to decide how many PCs to retain.
+
+## BiPlot
+
+Q: How read a biplot for PCA analysis?
+
+A:
+
+- Arrows tell us what the PCs mean. Look at which variables point along or against each axis.
+- Points tell us where observations fall on those dimensions. Look at which countries lie toward or opposite those arrows.
+
+Task: Compute the Biplot between PC1 and PC2
+
+```{r}
+biplot(pca_z, choices = c(1, 2), cex = c(0.6, 0.8))
+```
+
+Q: Interpret.
+
+A:
+
+- Points are countries projected onto PC1 (risk) and PC2 (growth and momentum); arrows show how the original indicators relate to these two components.
+- Indicators with arrows pointing in similar directions tend to move together, while arrows pointing in opposite directions indicate negative association. These relationships are being viewed only through PC1 and PC2.
+- The risk variables illustrate PC1 well. Equity Volatility, FX Volatility, Inflation, and Sovereign Risk Spread all point toward positive PC1, so countries far to the right tend to be higher-risk markets.
+- The growth-and-momentum variables—GDP Growth, Industrial Production Growth, Earnings Growth, and Equity Momentum—point toward positive PC2, so countries high on the vertical axis tend to have stronger growth and momentum.
+- A country located far in the direction of an indicator's arrow tends to have a relatively high value for that indicator; a country in the opposite direction tends to have a relatively low value.
+
+Task: Compute the Biplot between PC1 and PC3
+
+```{r}
+biplot(pca_z, choices = c(1, 3), cex = c(0.6, 0.8))
+```
+
+Q: Interpret.
+
+A:
+
+- PC1 remains the risk dimension on the horizontal axis, while PC3 captures the valuation dimension on the vertical axis.
+- The valuation variables dominate the PC3 direction. Forward P/E and Price-to-Book point toward negative PC3, while Dividend Yield points toward positive PC3. Thus more negative PC3 scores correspond approximately to more expensive equity markets (high P/E and P/B, low yield), and more positive PC3 scores to cheaper, higher-yielding markets.
+- Risk indicators continue to separate primarily along PC1: Equity Volatility, FX Volatility, Inflation, and Sovereign Risk Spread all lie toward positive PC1.
+- The plot therefore allows us to compare each country simultaneously along a risk dimension and a valuation dimension.
+
+Task: Compute the Biplot between PC2 and PC3
+
+```{r}
+biplot(pca_z, choices = c(2, 3), cex = c(0.6, 0.8))
+```
+
+Q: Interpret.
+
+A:
+
+- This plot displays the countries along PC2 (growth and momentum) and PC3 (valuation), while their PC1 (risk) scores are not shown.
+- Growth-and-momentum variables such as GDP Growth, Industrial Production Growth, Earnings Growth, and Equity Momentum point toward positive PC2.
+- The valuation contrast is clear along PC3: Forward P/E and Price-to-Book point toward negative PC3, while Dividend Yield points toward positive PC3.
+- PC2 and PC3 are orthogonal by construction, so the country scores on these two components are uncorrelated in the sample. This allows us to examine two separate dimensions of variation, but it does not imply that growth and valuation are economically independent.
+- Together, the three pairwise biplots provide three two-dimensional views of the first three PCs. No single two-dimensional biplot can display all three dimensions simultaneously.
+
+## Investment interpretation
+
+Q: What is the interpretation of each PC?
+
+A:
+
+- PC1 seems to capture market and macroeconomic risk
+- PC2 seems to capture growth and equity momentum
+- PC3 seems to capture equity valuation
+
+Q: Which direction of PC2 corresponds to stronger growth and momentum?
+
+A:
+
+- GDP Growth, Industrial Production Growth, Earnings Growth, and Equity Momentum all load positively on PC2.
+- Thus, under the realized sign convention, higher PC2 scores already correspond to stronger growth and momentum. This direction is intuitive, so no sign reversal is needed here.
+- Recall, however, that the sign of a PC is arbitrary: we could multiply PC2 by $-1$ without changing any information it contains. If the realized sign had been counterintuitive, we would simply reverse it.
+- We define a growth_momentum_score equal to the PC2 score and use it to rank and screen countries. This is a comparison device, not a recommendation to buy the highest-ranked country's ETF.
+
+Task: Rank the countries by growth and momentum strength.
+
+```{r}
+growth_momentum <- tibble(
+  country_code = country_data_standardized$country_code,
+  PC2 = pca_z$x[, 2],
+  growth_momentum_score = pca_z$x[, 2]
+) %>%
+  arrange(desc(growth_momentum_score)) %>%
+  mutate(rank = row_number())
+
+growth_momentum
+```
+
+Q: Which countries have the strongest growth and momentum?
+
+A:
+
+- CTRY042 stands out as an outlier at the very top of the ranking.
+- Beyond that, CTRY090, CTRY026, CTRY077, and CTRY030 are the strongest.
+- Again, this is a screening/comparison ranking, not a buy list.
+
+Task: Create a table that compares CTRY042 to the average country along all of the growth and momentum indicators.
+
+```{r}
+growth_validation_raw <- country_data %>%
+  select(country_code, c(GDP_Growth_Rate, Industrial_Production_Growth, Earnings_Growth_Rate, Equity_Momentum_12M)) %>%
+  pivot_longer(
+    cols = -country_code,
+    names_to = "Variable",
+    values_to = "Value"
+  ) %>%
+  group_by(Variable) %>%
+  summarise(
+    Average_Country = mean(Value, na.rm = TRUE),
+    CTRY042 = Value[country_code == "CTRY042"]
+  )
+
+growth_validation_raw
+```
+
+Q: Does the underlying data support our interpretation of CTRY042's PC2 score?
+
+A:
+
+- All four growth-and-momentum indicators are far above the average country: GDP growth, industrial production growth, earnings growth, and 12-month equity momentum are each multiples of the average.
+- This supports our conclusion that CTRY042 is an unusually strong growth/momentum country.
+
+Q: Which direction of PC1 corresponds to higher risk?
+
+A:
+
+- Equity Volatility, FX Volatility, Inflation, and Sovereign Risk Spread all load positively on PC1.
+- Thus, higher PC1 scores generally correspond to higher market and macroeconomic risk.
+- Conversely, lower PC1 scores generally correspond to lower risk. The realized sign is already intuitive (higher = riskier), so no reversal is needed.
+
+Task: Rank the countries by highest risk.
+
+```{r}
+risk_ranking <- tibble(
+  country_code = country_data_standardized$country_code,
+  PC1 = pca_z$x[, 1],
+  risk_score = pca_z$x[, 1]
+) %>%
+  arrange(desc(risk_score)) %>%
+  mutate(rank = row_number())
+head(risk_ranking, 10)
+```
+
+Q: Which countries have the highest risk according to PC1?
+
+A:
+
+- CTRY022 has by far the highest PC1 score and appears to be a high-risk outlier.
+- CTRY040, CTRY006, CTRY093, and CTRY020 have the next-highest PC1 scores.
+
+# Robustness Checks
+
+## Sensitivity to outliers
+
+Task: Remove CTRY022 and CTRY042. Rerun PCA.
+
+```{r}
+country_data_trimmed <- country_data_standardized %>%
+  filter(!country_code %in% c("CTRY022", "CTRY042"))
+
+pca_trimmed <- prcomp(country_data_trimmed %>% select(-country_code), scale. = FALSE)
+```
+
+Task: Compare the summary of the first 3 PCs for the new trimmed set and the original standardized data.
+
+```{r}
+summary(pca_z)$importance[, 1:3]
+summary(pca_trimmed)$importance[, 1:3]
+```
+
+Q: Does removing these two outlier countries change the PCA results substantially?
+
+A:
+
+- The standard deviations (and thus proportion/cumulative variance explained) for PC1-PC3 shift only modestly once CTRY022 and CTRY042 are removed: PC1's share falls from about 38% to 36% and PC3's rises from about 25% to 28%, while the cumulative share of the first three PCs stays near 99%. This suggests the overall PCA structure is not being driven by these two observations alone.
+- This is a reasonable sanity check any time an outlier is flagged during interpretation (as CTRY042 was for growth/momentum and CTRY022 for risk): if removing it changed the loadings or variance explained dramatically, we'd want to treat the original PCA results with more caution.
+
+## Correlated Variable
+
+Let's examine the impact upon PCA of highly correlated variables.
+
+Task: Duplicate the GDP growth indicator.
+
+```{r}
+country_data_extended <- country_data_standardized %>%
+  mutate(GDP_Growth_Rate_dup = GDP_Growth_Rate)
+```
+
+Task: Rerun PCA on an extended set that includes this duplicated indicator.
+
+```{r}
+pca_extended <- prcomp(country_data_extended %>% select(-country_code), scale. = FALSE)
+```
+
+Task: Summarize the PCA results for the original and extended dataset across the first 3 PCs
+
+```{r}
+summary(pca_z)$importance[, 1:3]
+summary(pca_extended)$importance[, 1:3]
+```
+
+Task: Display the loadings for the original and extended dataset of the first 3 PCs.
+
+```{r}
+round(pca_z$rotation[, 1:3], 3)
+round(pca_extended$rotation[, 1:3], 3)
+```
+
+Task: Display the scores for the original and extended dataset for the first two PCs.
+
+```{r}
+tibble(
+  country_code = country_data_standardized$country_code,
+  PC1_original = pca_z$x[, 1],
+  PC1_extended = pca_extended$x[, 1],
+  PC2_original = pca_z$x[, 2],
+  PC2_extended = pca_extended$x[, 2]
+) %>%
+  head(10)
+```
+
+Q: What's the impact on the variance explained, loading vectors, and scores?
+
+A:
+
+- **Variance explained**: In the original PCA, PC1 is the risk component (\~38%), PC2 is growth (\~36%), and PC3 is valuation (\~25%). Duplicating GDP_Growth_Rate doubles the weight of the growth signal, which raises the growth factor's eigenvalue above the risk factor's. As a result the growth component becomes PC1 (\~41%), risk drops to PC2 (\~34%), and valuation stays PC3 (\~23%). The cumulative share of the first three PCs is essentially unchanged (\~99%), but the ordering of the components has changed.
+- **Loading vectors**: `GDP_Growth_Rate_dup` receives exactly the same loading as `GDP_Growth_Rate` on every PC, since the two columns are perfectly correlated by construction. More importantly, the components rotate and reorder: the growth block (now five variables) forms the new PC1, while the risk block that previously defined PC1 moves to PC2. Duplicating an indicator increases its effective weight in the correlation structure and changes which block dominates each component.
+- **Scores**: individual country scores on the leading components change non-trivially—not just by a rescaling—because the components themselves have rotated and reordered. Comparing "PC1" before and after is misleading precisely because PC1 now represents a different dimension (growth) than it did originally (risk).
+- **Takeaway**: highly correlated or duplicated indicators bias PCA by double-counting the same underlying signal, inflating its apparent importance and distorting both the loadings and the resulting scores. This is a good reason to screen for near-duplicate or highly collinear indicators before running PCA, rather than relying on PCA alone to "fix" redundancy.
+
+## Noise
+
+Let's examine how measurement noise in one variable affects PCA. We will add progressively more independent noise to Equity_Volatility and examine how its role in the principal components changes.
+
+Task: Add increasing noise to Equity_Volatility, re-standardize the data, and record its correlation with the Sovereign Risk Spread and its loading on the risk component. Because PCA signs can flip and components can reorder across repeated runs, identify the risk component and align its sign against the original PCA before recording the loading.
+
+```{r}
+loadings_orig <- pca_z$rotation[, 1:3]
+
+# The risk block defines one of the first three components. Identify which
+# one by the block that loads most strongly on it, rather than assuming a
+# fixed index (adding noise can reorder the components).
+risk_block <- c(
+  "Equity_Volatility", "FX_Volatility",
+  "Inflation_Rate", "Sovereign_Risk_Spread_Bps"
+)
+risk_pc <- which.max(colMeans(abs(loadings_orig[risk_block, ])))
+risk_ref <- loadings_orig[, risk_pc]
+
+# Given a noisy rotation matrix, find the component (among the first 3) most
+# aligned with the original risk direction, flip its sign to match, and return
+# the aligned loading vector.
+match_risk_component <- function(rotation, ref, k = 3) {
+  dots <- sapply(seq_len(k), function(j) sum(ref * rotation[, j]))
+  j <- which.max(abs(dots))
+  v <- rotation[, j]
+  if (dots[j] < 0) v <- -v
+  v
+}
+
+noise_effect <- function(sigma2) {
+
+  noisy_data <- country_data_standardized %>%
+    mutate(
+      Equity_Volatility =
+        Equity_Volatility +
+        rnorm(n(), mean = 0, sd = sqrt(sigma2))
+    )
+
+  # Re-standardize after adding noise
+  x <- noisy_data %>%
+    select(-country_code) %>%
+    scale()
+
+  pca_noisy <- prcomp(x, center = FALSE, scale. = FALSE)
+
+  # Align the risk component with the original PCA, then read off the loading
+  risk_loading <- match_risk_component(
+    pca_noisy$rotation,
+    risk_ref
+  )["Equity_Volatility"]
+
+  tibble(
+    correlation = cor(
+      x[, "Equity_Volatility"],
+      x[, "Sovereign_Risk_Spread_Bps"]
+    ),
+    risk_loading = risk_loading
+  )
+}
+```
+
+Task: Repeat across increasing noise levels.
+
+```{r}
+sigma2_grid <- seq(0, 1, by = 0.1)
+n_reps <- 100
+
+set.seed(7194)
+
+noise_results <- map_dfr(sigma2_grid, function(s2) {
+
+  map_dfr(1:n_reps, function(i) {
+    noise_effect(s2)
+  }) %>%
+    summarize(
+      correlation = mean(correlation),
+      risk_loading = mean(risk_loading)
+    ) %>%
+    mutate(sigma2 = s2)
+})
+noise_results
+```
+
+Q: What happens as we add more noise?
+
+A:
+
+- The correlation between Equity_Volatility and Sovereign_Risk_Spread_Bps weakens as noise increases. This is the direct consequence of reducing the signal-to-noise ratio.
+- The risk-component loading on Equity_Volatility, however, need not decline smoothly. PCA recomputes the entire component from the full correlation structure, so an individual loading can remain stable or move non-monotonically even as the underlying relationship becomes noisier.
+- Takeaway: a PCA loading is not a direct measure of a variable's signal quality. Noise weakens shared structure, but the effect on individual PCA loadings can be more complicated.
