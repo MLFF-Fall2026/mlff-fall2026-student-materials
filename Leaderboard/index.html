@@ -1,0 +1,3866 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>Hedge Fund Exercise Leaderboard</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="index_files/libs/clipboard/clipboard.min.js"></script>
+<script src="index_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="index_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="index_files/libs/quarto-html/popper.min.js"></script>
+<script src="index_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="index_files/libs/quarto-html/anchor.min.js"></script>
+<link href="index_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="index_files/libs/quarto-html/quarto-syntax-highlighting-64a204ab8560d761af7679ceaba22944.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="index_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="index_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="index_files/libs/bootstrap/bootstrap-6e694d1f7ac3fc8d536aaaaf25d41a81.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<link href="index_files/libs/htmltools-fill-0.5.9/fill.css" rel="stylesheet">
+<script src="index_files/libs/htmlwidgets-1.6.4/htmlwidgets.js"></script>
+<script src="index_files/libs/plotly-binding-4.12.1/plotly.js"></script>
+<script src="index_files/libs/typedarray-0.1/typedarray.min.js"></script>
+<script src="index_files/libs/jquery-3.5.1/jquery.min.js"></script>
+<link href="index_files/libs/crosstalk-1.2.2/css/crosstalk.min.css" rel="stylesheet">
+<script src="index_files/libs/crosstalk-1.2.2/js/crosstalk.min.js"></script>
+<link href="index_files/libs/plotly-htmlwidgets-css-2.25.2/plotly-htmlwidgets.css" rel="stylesheet">
+<script src="index_files/libs/plotly-main-2.25.2/plotly-latest.min.js"></script>
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+<link rel="stylesheet" href="styles.css">
+</head>
+
+<body class="quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-full">
+
+<main class="content column-page" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Hedge Fund Exercise Leaderboard</h1>
+</div>
+
+
+
+<div class="quarto-title-meta column-page">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="housekeeping" class="level1">
+<h1>Housekeeping</h1>
+<div class="cell">
+<div style="page-break-after: always;"></div>
+</div>
+<div class="callout callout-style-simple callout-note">
+<div class="callout-body d-flex">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-body-container">
+<p><strong>Live fund performance.</strong> This dashboard tracks 5 real teams’ submitted Position Matrices and real Yahoo Finance prices from <strong>September 21, 2026 through December 02, 2026</strong>. Ranking is based on turnover-adjusted Sharpe, <span class="math inline">\(SR_{TO} = SR - \lambda\overline{TO}\)</span>, with <span class="math inline">\(\lambda = 0.5\)</span>.</p>
+</div>
+</div>
+</div>
+<div class="tabset-margin-container"></div><div class="panel-tabset">
+<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-1-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-1-1" role="tab" aria-controls="tabset-1-1" aria-selected="true" href="">Executive Performance Summary</a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-1-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-1-2" role="tab" aria-controls="tabset-1-2" aria-selected="false" href="">Fund Composition</a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-1-3-tab" data-bs-toggle="tab" data-bs-target="#tabset-1-3" role="tab" aria-controls="tabset-1-3" aria-selected="false" href="">Return Attribution</a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-1-4-tab" data-bs-toggle="tab" data-bs-target="#tabset-1-4" role="tab" aria-controls="tabset-1-4" aria-selected="false" href="">Deep-Dive Risk Profile</a></li></ul>
+<div class="tab-content">
+<div id="tabset-1-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-1-1-tab">
+<section id="performance-leaderboard" class="level3">
+<h3 class="anchored" data-anchor-id="performance-leaderboard">Performance Leaderboard</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div id="msngltatdt" style="padding-left:0px;padding-right:0px;padding-top:10px;padding-bottom:10px;overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
+<style>#msngltatdt table {
+  font-family: system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#msngltatdt thead, #msngltatdt tbody, #msngltatdt tfoot, #msngltatdt tr, #msngltatdt td, #msngltatdt th {
+  border-style: none;
+}
+
+#msngltatdt p {
+  margin: 0;
+  padding: 0;
+}
+
+#msngltatdt .gt_table {
+  display: table;
+  border-collapse: collapse;
+  line-height: normal;
+  margin-left: auto;
+  margin-right: auto;
+  color: #333333;
+  font-size: 16px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+
+#msngltatdt .gt_caption {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+#msngltatdt .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+
+#msngltatdt .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 3px;
+  padding-bottom: 5px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+
+#msngltatdt .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#msngltatdt .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#msngltatdt .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#msngltatdt .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+
+#msngltatdt .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+#msngltatdt .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+
+#msngltatdt .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+
+#msngltatdt .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+
+#msngltatdt .gt_spanner_row {
+  border-bottom-style: hidden;
+}
+
+#msngltatdt .gt_group_heading {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  text-align: left;
+}
+
+#msngltatdt .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#msngltatdt .gt_from_md > :first-child {
+  margin-top: 0;
+}
+
+#msngltatdt .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+
+#msngltatdt .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+
+#msngltatdt .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#msngltatdt .gt_stub_row_group {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+  vertical-align: top;
+}
+
+#msngltatdt .gt_row_group_first td {
+  border-top-width: 2px;
+}
+
+#msngltatdt .gt_row_group_first th {
+  border-top-width: 2px;
+}
+
+#msngltatdt .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#msngltatdt .gt_first_summary_row {
+  border-top-style: solid;
+  border-top-color: #D3D3D3;
+}
+
+#msngltatdt .gt_first_summary_row.thick {
+  border-top-width: 2px;
+}
+
+#msngltatdt .gt_last_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#msngltatdt .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#msngltatdt .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+
+#msngltatdt .gt_last_grand_summary_row_top {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: double;
+  border-bottom-width: 6px;
+  border-bottom-color: #D3D3D3;
+}
+
+#msngltatdt .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+#msngltatdt .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#msngltatdt .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#msngltatdt .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#msngltatdt .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#msngltatdt .gt_sourcenote {
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#msngltatdt .gt_left {
+  text-align: left;
+}
+
+#msngltatdt .gt_center {
+  text-align: center;
+}
+
+#msngltatdt .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#msngltatdt .gt_font_normal {
+  font-weight: normal;
+}
+
+#msngltatdt .gt_font_bold {
+  font-weight: bold;
+}
+
+#msngltatdt .gt_font_italic {
+  font-style: italic;
+}
+
+#msngltatdt .gt_super {
+  font-size: 65%;
+}
+
+#msngltatdt .gt_footnote_marks {
+  font-size: 75%;
+  vertical-align: 0.4em;
+  position: initial;
+}
+
+#msngltatdt .gt_asterisk {
+  font-size: 100%;
+  vertical-align: 0;
+}
+
+#msngltatdt .gt_indent_1 {
+  text-indent: 5px;
+}
+
+#msngltatdt .gt_indent_2 {
+  text-indent: 10px;
+}
+
+#msngltatdt .gt_indent_3 {
+  text-indent: 15px;
+}
+
+#msngltatdt .gt_indent_4 {
+  text-indent: 20px;
+}
+
+#msngltatdt .gt_indent_5 {
+  text-indent: 25px;
+}
+
+#msngltatdt .katex-display {
+  display: inline-flex !important;
+  margin-bottom: 0.75em !important;
+}
+
+#msngltatdt div.Reactable > div.rt-table > div.rt-thead > div.rt-tr.rt-tr-group-header > div.rt-th-group:after {
+  height: 0px !important;
+}
+</style>
+
+<table class="gt_table caption-top table table-sm table-striped small" data-quarto-bootstrap="false">
+<thead>
+<tr class="gt_heading header">
+<td colspan="10" class="gt_heading gt_title gt_font_normal"><strong>Performance Leaderboard</strong></td>
+</tr>
+<tr class="gt_heading even">
+<td colspan="10" class="gt_heading gt_subtitle gt_font_normal gt_bottom_border">As of September 21, 2026 | Benchmark: IVV</td>
+</tr>
+<tr class="gt_col_headings header">
+<th id="a::stub" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col"></th>
+<th id="Rank" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Rank</th>
+<th id="WTD" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">WTD</th>
+<th id="MTD" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">MTD</th>
+<th id="Trailing-4-Week" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Trailing 4-Week</th>
+<th id="ITD" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">ITD</th>
+<th id="SR_f" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">SR_f</th>
+<th id="SR" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">SR</th>
+<th id="Avg-Weekly-TO" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Avg Weekly TO</th>
+<th id="Information-Ratio" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Information Ratio</th>
+</tr>
+</thead>
+<tbody class="gt_table_body">
+<tr class="odd">
+<th id="stub_1_1" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Bulls_Not_Bears</th>
+<td class="gt_row gt_center" headers="stub_1_1 Rank">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 WTD">−3.62%</td>
+<td class="gt_row gt_center" headers="stub_1_1 MTD">−3.62%</td>
+<td class="gt_row gt_center" headers="stub_1_1 Trailing 4-Week">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 ITD">−3.62%</td>
+<td class="gt_row gt_center" headers="stub_1_1 SR_f">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 SR">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 Avg Weekly TO">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_1 Information Ratio">—</td>
+</tr>
+<tr class="even">
+<th id="stub_1_2" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Here_Comes_The_Bull</th>
+<td class="gt_row gt_center" headers="stub_1_2 Rank">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 WTD">0.28%</td>
+<td class="gt_row gt_center" headers="stub_1_2 MTD">0.28%</td>
+<td class="gt_row gt_center" headers="stub_1_2 Trailing 4-Week">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 ITD">0.28%</td>
+<td class="gt_row gt_center" headers="stub_1_2 SR_f">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 SR">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 Avg Weekly TO">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_2 Information Ratio">—</td>
+</tr>
+<tr class="odd">
+<th id="stub_1_3" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">New_Life</th>
+<td class="gt_row gt_center" headers="stub_1_3 Rank">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 WTD">−0.10%</td>
+<td class="gt_row gt_center" headers="stub_1_3 MTD">−0.10%</td>
+<td class="gt_row gt_center" headers="stub_1_3 Trailing 4-Week">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 ITD">−0.10%</td>
+<td class="gt_row gt_center" headers="stub_1_3 SR_f">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 SR">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 Avg Weekly TO">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_3 Information Ratio">—</td>
+</tr>
+<tr class="even">
+<th id="stub_1_4" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Sharpe_Shooters</th>
+<td class="gt_row gt_center" headers="stub_1_4 Rank">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 WTD">0.14%</td>
+<td class="gt_row gt_center" headers="stub_1_4 MTD">0.14%</td>
+<td class="gt_row gt_center" headers="stub_1_4 Trailing 4-Week">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 ITD">0.14%</td>
+<td class="gt_row gt_center" headers="stub_1_4 SR_f">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 SR">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 Avg Weekly TO">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_4 Information Ratio">—</td>
+</tr>
+<tr class="odd">
+<th id="stub_1_5" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">The_Bigger_Short</th>
+<td class="gt_row gt_center" headers="stub_1_5 Rank">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 WTD">0.42%</td>
+<td class="gt_row gt_center" headers="stub_1_5 MTD">0.42%</td>
+<td class="gt_row gt_center" headers="stub_1_5 Trailing 4-Week">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 ITD">0.42%</td>
+<td class="gt_row gt_center" headers="stub_1_5 SR_f">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 SR">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 Avg Weekly TO">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_5 Information Ratio">—</td>
+</tr>
+<tr class="even">
+<th id="stub_1_6" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">IVV</th>
+<td class="gt_row gt_center" headers="stub_1_6 Rank" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 WTD" style="background-color: #F2F2F2; font-weight: bold">1.56%</td>
+<td class="gt_row gt_center" headers="stub_1_6 MTD" style="background-color: #F2F2F2; font-weight: bold">1.56%</td>
+<td class="gt_row gt_center" headers="stub_1_6 Trailing 4-Week" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 ITD" style="background-color: #F2F2F2; font-weight: bold">1.56%</td>
+<td class="gt_row gt_center" headers="stub_1_6 SR_f" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 SR" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 Avg Weekly TO" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 Information Ratio" style="background-color: #F2F2F2; font-weight: bold">—</td>
+</tr>
+</tbody><tfoot>
+<tr class="gt_sourcenotes odd">
+<td colspan="10" class="gt_sourcenote"><strong>Rank:</strong> standard competition ranking (1, 2, 2, 4) among rank-eligible funds, based on SR_f.&nbsp;IVV is shown for reference and is never ranked.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="10" class="gt_sourcenote"><strong>Fund:</strong> the student fund name, or IVV shown for reference as the trading benchmark.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="10" class="gt_sourcenote"><strong>WTD:</strong> week-to-date compounded return, from the most recent Monday through the as-of date.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="10" class="gt_sourcenote"><strong>MTD:</strong> month-to-date compounded return, from the first trading day of the current month through the as-of date.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="10" class="gt_sourcenote"><strong>Trailing 4-Week:</strong> compounded return over the trailing 20 trading days ending on the as-of date.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="10" class="gt_sourcenote"><strong>ITD:</strong> inception-to-date compounded return, computed since the fund’s first trading day.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="10" class="gt_sourcenote"><strong>SR_f:</strong> turnover-adjusted Sharpe ratio, computed since inception: <span class="math inline">\(SR_f = SR - \lambda\overline{TO}\)</span>, where <span class="math inline">\(\lambda = 0.5\)</span> and <span class="math inline">\(\overline{TO}\)</span> is average weekly turnover since inception.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="10" class="gt_sourcenote"><strong>SR:</strong> annualized Sharpe ratio, computed since inception. Undefined until a fund has 10 valid daily return observations.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="10" class="gt_sourcenote"><strong>Avg Weekly TO:</strong> average weekly turnover (sum of absolute weight changes across effective position matrices) since inception.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="10" class="gt_sourcenote"><strong>Information Ratio:</strong> annualized ratio of mean active return (over the benchmark) to tracking error, computed since inception. Undefined until a fund has 10 valid daily return observations; not defined for IVV, since its active return versus itself is identically zero.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="10" class="gt_sourcenote">Returns are computed from adjusted closing prices.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="10" class="gt_sourcenote">Source: Yahoo Finance</td>
+</tr>
+</tfoot>
+
+</table>
+
+</div>
+</div>
+</div>
+</section>
+<section id="rebased-growth-index" class="level3">
+<h3 class="anchored" data-anchor-id="rebased-growth-index">Rebased Growth Index</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div class="plotly html-widget html-fill-item" id="htmlwidget-9cff02884b72b1ac681d" style="width:100%;height:464px;"></div>
+<script type="application/json" data-for="htmlwidget-9cff02884b72b1ac681d">{"x":{"data":[{"x":[20717],"y":[96.379050933933542],"text":"date: 2026-09-21<br />equity_index:  96.37905<br />team: Bulls_Not_Bears","type":"scatter","mode":"lines","line":{"width":3.4015748031496069,"color":"rgba(248,118,109,1)","dash":"solid"},"hoveron":"points","name":"Bulls_Not_Bears","legendgroup":"Bulls_Not_Bears","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[20717],"y":[100.2794972540531],"text":"date: 2026-09-21<br />equity_index: 100.27950<br />team: Here_Comes_The_Bull","type":"scatter","mode":"lines","line":{"width":3.4015748031496069,"color":"rgba(163,165,0,1)","dash":"solid"},"hoveron":"points","name":"Here_Comes_The_Bull","legendgroup":"Here_Comes_The_Bull","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[20717],"y":[99.89759441332636],"text":"date: 2026-09-21<br />equity_index:  99.89759<br />team: New_Life","type":"scatter","mode":"lines","line":{"width":3.4015748031496069,"color":"rgba(0,191,125,1)","dash":"solid"},"hoveron":"points","name":"New_Life","legendgroup":"New_Life","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[20717],"y":[100.13907616870905],"text":"date: 2026-09-21<br />equity_index: 100.13908<br />team: Sharpe_Shooters","type":"scatter","mode":"lines","line":{"width":3.4015748031496069,"color":"rgba(0,176,246,1)","dash":"solid"},"hoveron":"points","name":"Sharpe_Shooters","legendgroup":"Sharpe_Shooters","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[20717],"y":[100.41769353932951],"text":"date: 2026-09-21<br />equity_index: 100.41769<br />team: The_Bigger_Short","type":"scatter","mode":"lines","line":{"width":3.4015748031496069,"color":"rgba(231,107,243,1)","dash":"solid"},"hoveron":"points","name":"The_Bigger_Short","legendgroup":"The_Bigger_Short","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[20717],"y":[101.56094790411674],"text":"date: 2026-09-21<br />equity_index: 101.5609","type":"scatter","mode":"lines","line":{"width":4.7244094488188981,"color":"rgba(0,0,0,1)","dash":"dash"},"hoveron":"points","showlegend":false,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null}],"layout":{"margin":{"t":43.098381070983812,"r":7.9701120797011216,"b":24.707347447073481,"l":47.023661270236623},"paper_bgcolor":"rgba(255,255,255,1)","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243},"title":{"text":"Growth of 100","font":{"color":"rgba(0,0,0,1)","family":"","size":19.128268991282692},"x":0,"xref":"paper"},"xaxis":{"domain":[0,1],"automargin":true,"type":"linear","autorange":false,"range":[20716.950000000001,20717.049999999999],"tickmode":"array","ticktext":["Sep 21"],"tickvals":[20717],"categoryorder":"array","categoryarray":["Sep 21"],"nticks":null,"ticks":"","tickcolor":null,"ticklen":3.9850560398505608,"tickwidth":0,"showticklabels":true,"tickfont":{"color":"rgba(77,77,77,1)","family":"","size":12.7521793275218},"tickangle":-0,"showline":false,"linecolor":null,"linewidth":0,"showgrid":true,"gridcolor":"rgba(235,235,235,1)","gridwidth":0.72455564360919278,"zeroline":false,"anchor":"y","title":{"text":"","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243}},"hoverformat":".2f"},"yaxis":{"domain":[0,1],"automargin":true,"type":"linear","autorange":false,"range":[96.119956085424377,101.82004275262591],"tickmode":"array","ticktext":["97","98","99","100","101"],"tickvals":[97,98,99,100,101],"categoryorder":"array","categoryarray":["97","98","99","100","101"],"nticks":null,"ticks":"","tickcolor":null,"ticklen":3.9850560398505608,"tickwidth":0,"showticklabels":true,"tickfont":{"color":"rgba(77,77,77,1)","family":"","size":12.7521793275218},"tickangle":-0,"showline":false,"linecolor":null,"linewidth":0,"showgrid":true,"gridcolor":"rgba(235,235,235,1)","gridwidth":0.72455564360919278,"zeroline":false,"anchor":"x","title":{"text":"Growth Index","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243}},"hoverformat":".2f"},"shapes":[],"showlegend":true,"legend":{"bgcolor":null,"bordercolor":null,"borderwidth":0,"font":{"color":"rgba(0,0,0,1)","family":"","size":12.7521793275218},"orientation":"h","x":0.5,"y":-0.14999999999999999,"xanchor":"center","yanchor":"top","title":{"text":"Fund","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243}}},"hovermode":"closest","barmode":"relative"},"config":{"doubleClick":"reset","modeBarButtonsToAdd":["hoverclosest","hovercompare"],"showSendToCloud":false},"source":"A","attrs":{"1b2452a28e77":{"x":{},"y":{},"colour":{},"type":"scatter"},"1b2429db154a":{"x":{},"y":{}}},"cur_data":"1b2452a28e77","visdat":{"1b2452a28e77":["function (y) ","x"],"1b2429db154a":["function (y) ","x"]},"highlight":{"on":"plotly_click","persistent":false,"dynamic":false,"selectize":false,"opacityDim":0.20000000000000001,"selected":{"opacity":1},"debounce":0},"shinyEvents":["plotly_hover","plotly_click","plotly_selected","plotly_relayout","plotly_brushed","plotly_brushing","plotly_clickannotation","plotly_doubleclick","plotly_deselect","plotly_afterplot","plotly_sunburstclick"],"base_url":"https://plot.ly"},"evals":[],"jsHooks":[]}</script>
+</div>
+</div>
+</section>
+</div>
+<div id="tabset-1-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-1-2-tab">
+<section id="fund-composition-table" class="level3">
+<h3 class="anchored" data-anchor-id="fund-composition-table">Fund Composition Table</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div id="cilsrmivnn" style="padding-left:0px;padding-right:0px;padding-top:10px;padding-bottom:10px;overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
+<style>#cilsrmivnn table {
+  font-family: system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#cilsrmivnn thead, #cilsrmivnn tbody, #cilsrmivnn tfoot, #cilsrmivnn tr, #cilsrmivnn td, #cilsrmivnn th {
+  border-style: none;
+}
+
+#cilsrmivnn p {
+  margin: 0;
+  padding: 0;
+}
+
+#cilsrmivnn .gt_table {
+  display: table;
+  border-collapse: collapse;
+  line-height: normal;
+  margin-left: auto;
+  margin-right: auto;
+  color: #333333;
+  font-size: 16px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_caption {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+#cilsrmivnn .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+
+#cilsrmivnn .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 3px;
+  padding-bottom: 5px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+
+#cilsrmivnn .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+
+#cilsrmivnn .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+#cilsrmivnn .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+
+#cilsrmivnn .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+
+#cilsrmivnn .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+
+#cilsrmivnn .gt_spanner_row {
+  border-bottom-style: hidden;
+}
+
+#cilsrmivnn .gt_group_heading {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  text-align: left;
+}
+
+#cilsrmivnn .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#cilsrmivnn .gt_from_md > :first-child {
+  margin-top: 0;
+}
+
+#cilsrmivnn .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+
+#cilsrmivnn .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+
+#cilsrmivnn .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#cilsrmivnn .gt_stub_row_group {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+  vertical-align: top;
+}
+
+#cilsrmivnn .gt_row_group_first td {
+  border-top-width: 2px;
+}
+
+#cilsrmivnn .gt_row_group_first th {
+  border-top-width: 2px;
+}
+
+#cilsrmivnn .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#cilsrmivnn .gt_first_summary_row {
+  border-top-style: solid;
+  border-top-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_first_summary_row.thick {
+  border-top-width: 2px;
+}
+
+#cilsrmivnn .gt_last_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#cilsrmivnn .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_last_grand_summary_row_top {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: double;
+  border-bottom-width: 6px;
+  border-bottom-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+#cilsrmivnn .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#cilsrmivnn .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#cilsrmivnn .gt_sourcenote {
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#cilsrmivnn .gt_left {
+  text-align: left;
+}
+
+#cilsrmivnn .gt_center {
+  text-align: center;
+}
+
+#cilsrmivnn .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#cilsrmivnn .gt_font_normal {
+  font-weight: normal;
+}
+
+#cilsrmivnn .gt_font_bold {
+  font-weight: bold;
+}
+
+#cilsrmivnn .gt_font_italic {
+  font-style: italic;
+}
+
+#cilsrmivnn .gt_super {
+  font-size: 65%;
+}
+
+#cilsrmivnn .gt_footnote_marks {
+  font-size: 75%;
+  vertical-align: 0.4em;
+  position: initial;
+}
+
+#cilsrmivnn .gt_asterisk {
+  font-size: 100%;
+  vertical-align: 0;
+}
+
+#cilsrmivnn .gt_indent_1 {
+  text-indent: 5px;
+}
+
+#cilsrmivnn .gt_indent_2 {
+  text-indent: 10px;
+}
+
+#cilsrmivnn .gt_indent_3 {
+  text-indent: 15px;
+}
+
+#cilsrmivnn .gt_indent_4 {
+  text-indent: 20px;
+}
+
+#cilsrmivnn .gt_indent_5 {
+  text-indent: 25px;
+}
+
+#cilsrmivnn .katex-display {
+  display: inline-flex !important;
+  margin-bottom: 0.75em !important;
+}
+
+#cilsrmivnn div.Reactable > div.rt-table > div.rt-thead > div.rt-tr.rt-tr-group-header > div.rt-th-group:after {
+  height: 0px !important;
+}
+</style>
+
+<table class="gt_table caption-top table table-sm table-striped small" data-quarto-bootstrap="false">
+<thead>
+<tr class="gt_heading header">
+<td colspan="6" class="gt_heading gt_title gt_font_normal"><strong>Fund Composition</strong></td>
+</tr>
+<tr class="gt_heading even">
+<td colspan="6" class="gt_heading gt_subtitle gt_font_normal gt_bottom_border">As of September 21, 2026</td>
+</tr>
+<tr class="gt_col_headings header">
+<th id="a::stub" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col"></th>
+<th id="Max-Positions" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Max Positions</th>
+<th id="Min-Positions" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Min Positions</th>
+<th id="Current-Positions" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Current Positions</th>
+<th id="Effective-#-of-Bets" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Effective # of Bets</th>
+<th id="Top-10-Concentration" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Top 10 Concentration</th>
+</tr>
+</thead>
+<tbody class="gt_table_body">
+<tr class="odd">
+<th id="stub_1_1" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Bulls_Not_Bears</th>
+<td class="gt_row gt_center" headers="stub_1_1 Max Positions">13</td>
+<td class="gt_row gt_center" headers="stub_1_1 Min Positions">13</td>
+<td class="gt_row gt_center" headers="stub_1_1 Current Positions">13</td>
+<td class="gt_row gt_center" headers="stub_1_1 Effective # of Bets">13.0</td>
+<td class="gt_row gt_center" headers="stub_1_1 Top 10 Concentration">76.9%</td>
+</tr>
+<tr class="even">
+<th id="stub_1_2" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Here_Comes_The_Bull</th>
+<td class="gt_row gt_center" headers="stub_1_2 Max Positions">50</td>
+<td class="gt_row gt_center" headers="stub_1_2 Min Positions">50</td>
+<td class="gt_row gt_center" headers="stub_1_2 Current Positions">50</td>
+<td class="gt_row gt_center" headers="stub_1_2 Effective # of Bets">8.4</td>
+<td class="gt_row gt_center" headers="stub_1_2 Top 10 Concentration">58.4%</td>
+</tr>
+<tr class="odd">
+<th id="stub_1_3" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">New_Life</th>
+<td class="gt_row gt_center" headers="stub_1_3 Max Positions">11</td>
+<td class="gt_row gt_center" headers="stub_1_3 Min Positions">11</td>
+<td class="gt_row gt_center" headers="stub_1_3 Current Positions">11</td>
+<td class="gt_row gt_center" headers="stub_1_3 Effective # of Bets">9.1</td>
+<td class="gt_row gt_center" headers="stub_1_3 Top 10 Concentration">96.4%</td>
+</tr>
+<tr class="even">
+<th id="stub_1_4" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Sharpe_Shooters</th>
+<td class="gt_row gt_center" headers="stub_1_4 Max Positions">8</td>
+<td class="gt_row gt_center" headers="stub_1_4 Min Positions">8</td>
+<td class="gt_row gt_center" headers="stub_1_4 Current Positions">8</td>
+<td class="gt_row gt_center" headers="stub_1_4 Effective # of Bets">3.5</td>
+<td class="gt_row gt_center" headers="stub_1_4 Top 10 Concentration">100.0%</td>
+</tr>
+<tr class="odd">
+<th id="stub_1_5" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">The_Bigger_Short</th>
+<td class="gt_row gt_center" headers="stub_1_5 Max Positions">250</td>
+<td class="gt_row gt_center" headers="stub_1_5 Min Positions">250</td>
+<td class="gt_row gt_center" headers="stub_1_5 Current Positions">250</td>
+<td class="gt_row gt_center" headers="stub_1_5 Effective # of Bets">169.6</td>
+<td class="gt_row gt_center" headers="stub_1_5 Top 10 Concentration">12.9%</td>
+</tr>
+</tbody><tfoot>
+<tr class="gt_sourcenotes odd">
+<td colspan="6" class="gt_sourcenote"><strong>Fund:</strong> the student fund name. IVV is excluded, since it is a single-instrument reference benchmark rather than a managed portfolio.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="6" class="gt_sourcenote"><strong>Max Positions / Min Positions:</strong> the maximum and minimum number of distinct nonzero positions (long or short) held on any valuation date since the fund’s first effective position matrix. No limit or benchmark is imposed; these are purely descriptive.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="6" class="gt_sourcenote"><strong>Current Positions:</strong> the number of distinct nonzero positions held as of the latest date with a valid effective position matrix.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="6" class="gt_sourcenote"><strong>Effective # of Bets:</strong> <span class="math inline">\(1 / \sum_i p_i^2\)</span>, where <span class="math inline">\(p_i\)</span> is position <span class="math inline">\(i\)</span>’s share of current gross exposure, <span class="math inline">\(p_i = |V_i| / \sum_j |V_j|\)</span>. Uses absolute market values so long and short positions do not offset one another. Lower values indicate exposure concentrated in fewer positions; higher values indicate exposure spread more evenly. Neither is inherently better.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="6" class="gt_sourcenote"><strong>Top 10 Concentration:</strong> the share of current gross exposure represented by the 10 largest positions by absolute market value (all positions, if fewer than 10 are held).</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="6" class="gt_sourcenote">Position counts are computed since fund inception; Effective # of Bets and Top 10 Concentration use only the latest valid position matrix.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="6" class="gt_sourcenote">Funds are listed in leaderboard rank order for consistency with other tabs.</td>
+</tr>
+</tfoot>
+
+</table>
+
+</div>
+</div>
+</div>
+</section>
+</div>
+<div id="tabset-1-3" class="tab-pane" role="tabpanel" aria-labelledby="tabset-1-3-tab">
+<section id="contribution-by-fund" class="level3">
+<h3 class="anchored" data-anchor-id="contribution-by-fund">Contribution by Fund</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div class="plotly html-widget html-fill-item" id="htmlwidget-3c752dcdef66e623cf0e" style="width:100%;height:464px;"></div>
+<script type="application/json" data-for="htmlwidget-3c752dcdef66e623cf0e">{"x":{"data":[{"orientation":"v","width":[0.60000000000000009,0.60000000000000009,0.60000000000000009,0.60000000000000009,0.60000000000000009,0.59999999999999987,0.59999999999999987,0.59999999999999987,0.59999999999999987,0.59999999999999987,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964],"base":[-0.021095480733784755,-0.017371056649029656,-0.013295796178072531,-0.0090808351230115582,-0.0046937680802510698,-0.0042303427621534972,-0.003628742182249102,-0.0029011645744725506,-0.0021453256957732264,-0.0012173758415073271,-0.0091921221656092282,-0.0087232793661515973,-0.006159996768869351,-0.0035661482095999198,-0.0026887917817967444,-0.0026662497692390976,-0.002353242327713776,-0.0033666393324359436,-0.003039365077196985,-0.0026577688672714747,-0.0021175800902494581,-0.0012133440916756082],"x":[1,1,1,1,1,2,2,2,2,2,3,3,3,3,4,4,4,5,5,5,5,5],"y":[0.0037244240847550993,0.0040752604709571247,0.0042149610550609728,0.0043870670427604884,0.0046937680802510698,0.00060160057990439521,0.00072757760777655139,0.00075583887869932424,0.0009279498542658993,0.0012173758415073271,0.00046884279945763087,0.0025632825972822463,0.0025938485592694313,0.0035661482095999198,2.2542012557646724e-05,0.00031300744152532164,0.002353242327713776,0.00032727425523895867,0.00038159620992551024,0.00054018877702201665,0.00090423599857384989,0.0012133440916756082],"text":["VLO: -0.4%","MPC: -0.4%","REI: -0.4%","DINO: -0.4%","PBF: -0.5%","DUOL: -0.1%","WIX: -0.1%","RBLX: -0.1%","BMNR: -0.1%","MSTR: -0.1%","IWM: 0.0%","XOM: -0.3%","QQQ: -0.3%","SPY: -0.4%","AIRR: 0.0%","OIH: 0.0%","RSP: -0.2%","STLD: 0.0%","META: 0.0%","PSX: -0.1%","MPC: -0.1%","VLO: -0.1%"],"type":"bar","textposition":"none","marker":{"autocolorscale":false,"color":"rgba(165,15,21,1)","line":{"width":1.8897637795275593,"color":"transparent"}},"name":"Top Negative","legendgroup":"Top Negative","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"orientation":"v","width":[0.60000000000000009,0.59999999999999987,0.59999999999999964],"base":[-0.036209490660664631,-0.0087872578169385512,-0.011604397032918047],"x":[1,2,5],"y":[0.015114009926879876,0.004556915054785054,0.0082377577004821047],"text":["Other Negative: -1.5%","Other Negative: -0.5%","Other Negative: -0.8%"],"type":"bar","textposition":"none","marker":{"autocolorscale":false,"color":"rgba(252,174,145,1)","line":{"width":1.8897637795275593,"color":"transparent"}},"name":"Other Negative","legendgroup":"Other Negative","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"orientation":"v","width":[0.59999999999999987,0.59999999999999964,0.59999999999999964],"base":[0,0,0],"x":[2,3,5],"y":[0.0039635521783554705,0.00091577750190221532,0.0094959909522162253],"text":["Other Positive: 0.4%","Other Positive: 0.1%","Other Positive: 0.9%"],"type":"bar","textposition":"none","marker":{"autocolorscale":false,"color":"rgba(161,217,155,1)","line":{"width":1.8897637795275593,"color":"transparent"}},"name":"Other Positive","legendgroup":"Other Positive","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"orientation":"v","width":[0.59999999999999987,0.59999999999999987,0.59999999999999987,0.59999999999999987,0.59999999999999987,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964,0.59999999999999964],"base":[0.0087548701694222797,0.0064037060850678628,0.0052609881697013271,0.0043826348715495945,0.0039635521783554705,0.0062651978331700817,0.0047117296913154628,0.0032059730788680206,0.001729114085370136,0.00091577750190221532,0.0017163973527226028,0.0011382983882989839,0.00062237394044452722,0.00014436234239897594,0,0.012648274786272926,0.011670211950620835,0.010731298800885405,0.010025628857029196,0.0094959909522162253],"x":[2,2,2,2,2,3,3,3,3,3,4,4,4,4,4,5,5,5,5,5],"y":[0.0028273601880472038,0.0023511640843544169,0.0011427179153665357,0.00087835329815173259,0.00041908269319412394,0.0019028684657027561,0.0015534681418546189,0.0015057566124474422,0.0014768589934978846,0.00081333658346792069,0.0023631561161647149,0.00057809896442361885,0.00051592444785445672,0.00047801159804555131,0.00014436234239897594,0.0031330576399400505,0.00097806283565209096,0.00093891314973543021,0.00070566994385620925,0.00052963790481297054],"text":["AXTI: 0.3%","VOO: 0.2%","INTC: 0.1%","DOCN: 0.1%","MU: 0.0%","MSFT: 0.2%","GOOGL: 0.2%","ETN: 0.2%","GS: 0.1%","JPM: 0.1%","PSI: 0.2%","XBI: 0.1%","USRT: 0.1%","KBWB: 0.0%","COPX: 0.0%","WBD: 0.3%","INTC: 0.1%","DDOG: 0.1%","AKAM: 0.1%","FTNT: 0.1%"],"type":"bar","textposition":"none","marker":{"autocolorscale":false,"color":"rgba(0,109,44,1)","line":{"width":1.8897637795275593,"color":"transparent"}},"name":"Top Positive","legendgroup":"Top Positive","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[0.40000000000000002,5.5999999999999996],"y":[0,0],"text":"","type":"scatter","mode":"lines","line":{"width":1.5118110236220474,"color":"rgba(0,0,0,1)","dash":"solid"},"hoveron":"points","showlegend":false,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[1,2,3,4,5],"y":[-0.036209490660664631,0.0027949725405309309,-0.0010240558667363904,0.0013907616870905734,0.0041769353932949267],"text":"","type":"scatter","mode":"markers","marker":{"autocolorscale":false,"color":"rgba(0,0,0,1)","opacity":1,"size":11.338582677165356,"symbol":"diamond","line":{"width":1.8897637795275593,"color":"rgba(0,0,0,1)"}},"hoveron":"points","showlegend":false,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null}],"layout":{"margin":{"t":43.098381070983812,"r":7.9701120797011216,"b":24.707347447073481,"l":47.023661270236623},"paper_bgcolor":"rgba(255,255,255,1)","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243},"title":{"text":"Since-Inception Return Attribution","font":{"color":"rgba(0,0,0,1)","family":"","size":19.128268991282692},"x":0,"xref":"paper"},"xaxis":{"domain":[0,1],"automargin":true,"type":"linear","autorange":false,"range":[0.40000000000000002,5.5999999999999996],"tickmode":"array","ticktext":["Bulls_Not_Bears","Here_Comes_The_Bull","New_Life","Sharpe_Shooters","The_Bigger_Short"],"tickvals":[1,2,3,4,5],"categoryorder":"array","categoryarray":["Bulls_Not_Bears","Here_Comes_The_Bull","New_Life","Sharpe_Shooters","The_Bigger_Short"],"nticks":null,"ticks":"","tickcolor":null,"ticklen":3.9850560398505608,"tickwidth":0,"showticklabels":true,"tickfont":{"color":"rgba(77,77,77,1)","family":"","size":12.7521793275218},"tickangle":-0,"showline":false,"linecolor":null,"linewidth":0,"showgrid":true,"gridcolor":"rgba(235,235,235,1)","gridwidth":0.72455564360919278,"zeroline":false,"anchor":"y","title":{"text":"","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243}},"hoverformat":".2f"},"yaxis":{"domain":[0,1],"automargin":true,"type":"linear","autorange":false,"range":[-0.038809031815008513,0.018380873580556858],"tickmode":"array","ticktext":["-3%","-2%","-1%","0%","1%"],"tickvals":[-0.029999999999999999,-0.02,-0.010000000000000002,0,0.010000000000000002],"categoryorder":"array","categoryarray":["-3%","-2%","-1%","0%","1%"],"nticks":null,"ticks":"","tickcolor":null,"ticklen":3.9850560398505608,"tickwidth":0,"showticklabels":true,"tickfont":{"color":"rgba(77,77,77,1)","family":"","size":12.7521793275218},"tickangle":-0,"showline":false,"linecolor":null,"linewidth":0,"showgrid":true,"gridcolor":"rgba(235,235,235,1)","gridwidth":0.72455564360919278,"zeroline":false,"anchor":"x","title":{"text":"Return Contribution","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243}},"hoverformat":".2f"},"shapes":[],"showlegend":true,"legend":{"bgcolor":null,"bordercolor":null,"borderwidth":0,"font":{"color":"rgba(0,0,0,1)","family":"","size":12.7521793275218},"orientation":"h","x":0.5,"y":-0.14999999999999999,"xanchor":"center","yanchor":"top","title":{"text":"Category","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243}}},"hovermode":"closest","barmode":"relative"},"config":{"doubleClick":"reset","modeBarButtonsToAdd":["hoverclosest","hovercompare"],"showSendToCloud":false},"source":"A","attrs":{"1b247eee2db9":{"x":{},"y":{},"fill":{},"text":{},"type":"bar"},"1b2433e02244":{"yintercept":{}},"1b242b37df98":{"x":{},"y":{}}},"cur_data":"1b247eee2db9","visdat":{"1b247eee2db9":["function (y) ","x"],"1b2433e02244":["function (y) ","x"],"1b242b37df98":["function (y) ","x"]},"highlight":{"on":"plotly_click","persistent":false,"dynamic":false,"selectize":false,"opacityDim":0.20000000000000001,"selected":{"opacity":1},"debounce":0},"shinyEvents":["plotly_hover","plotly_click","plotly_selected","plotly_relayout","plotly_brushed","plotly_brushing","plotly_clickannotation","plotly_doubleclick","plotly_deselect","plotly_afterplot","plotly_sunburstclick"],"base_url":"https://plot.ly"},"evals":[],"jsHooks":[]}</script>
+</div>
+</div>
+<div class="callout callout-style-simple callout-note">
+<div class="callout-body d-flex">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-body-container">
+<p>Each bar aggregates every ticker the fund has ever held into its Top 5 positive contributors, Top 5 negative contributors, and separate <strong>Other Positive</strong> / <strong>Other Negative</strong> residuals, so the chart stays readable even for funds with 50+ historical positions. Contributions are linked across days using Carino logarithmic smoothing so that, for each fund, the segments sum exactly to its since-inception compounded return (marked with a diamond) — a simple sum of daily percentage contributions would not reconcile once returns compound over multiple periods. Days with pending/blocked market data contribute zero, consistent with how the equity curve treats them elsewhere in this dashboard. Higher or lower concentration of contribution across positions is not itself favorable or unfavorable; this view shows where return came from, not how it was constructed.</p>
+</div>
+</div>
+</div>
+</section>
+<section id="attribution-reconciliation-check" class="level3">
+<h3 class="anchored" data-anchor-id="attribution-reconciliation-check">Attribution Reconciliation Check</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div id="ybqvnzwwpb" style="padding-left:0px;padding-right:0px;padding-top:10px;padding-bottom:10px;overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
+<style>#ybqvnzwwpb table {
+  font-family: system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#ybqvnzwwpb thead, #ybqvnzwwpb tbody, #ybqvnzwwpb tfoot, #ybqvnzwwpb tr, #ybqvnzwwpb td, #ybqvnzwwpb th {
+  border-style: none;
+}
+
+#ybqvnzwwpb p {
+  margin: 0;
+  padding: 0;
+}
+
+#ybqvnzwwpb .gt_table {
+  display: table;
+  border-collapse: collapse;
+  line-height: normal;
+  margin-left: auto;
+  margin-right: auto;
+  color: #333333;
+  font-size: 16px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_caption {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+#ybqvnzwwpb .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+
+#ybqvnzwwpb .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 3px;
+  padding-bottom: 5px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+
+#ybqvnzwwpb .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+
+#ybqvnzwwpb .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+#ybqvnzwwpb .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+
+#ybqvnzwwpb .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+
+#ybqvnzwwpb .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+
+#ybqvnzwwpb .gt_spanner_row {
+  border-bottom-style: hidden;
+}
+
+#ybqvnzwwpb .gt_group_heading {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  text-align: left;
+}
+
+#ybqvnzwwpb .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#ybqvnzwwpb .gt_from_md > :first-child {
+  margin-top: 0;
+}
+
+#ybqvnzwwpb .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+
+#ybqvnzwwpb .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+
+#ybqvnzwwpb .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#ybqvnzwwpb .gt_stub_row_group {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+  vertical-align: top;
+}
+
+#ybqvnzwwpb .gt_row_group_first td {
+  border-top-width: 2px;
+}
+
+#ybqvnzwwpb .gt_row_group_first th {
+  border-top-width: 2px;
+}
+
+#ybqvnzwwpb .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#ybqvnzwwpb .gt_first_summary_row {
+  border-top-style: solid;
+  border-top-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_first_summary_row.thick {
+  border-top-width: 2px;
+}
+
+#ybqvnzwwpb .gt_last_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#ybqvnzwwpb .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_last_grand_summary_row_top {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: double;
+  border-bottom-width: 6px;
+  border-bottom-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+#ybqvnzwwpb .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#ybqvnzwwpb .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#ybqvnzwwpb .gt_sourcenote {
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#ybqvnzwwpb .gt_left {
+  text-align: left;
+}
+
+#ybqvnzwwpb .gt_center {
+  text-align: center;
+}
+
+#ybqvnzwwpb .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#ybqvnzwwpb .gt_font_normal {
+  font-weight: normal;
+}
+
+#ybqvnzwwpb .gt_font_bold {
+  font-weight: bold;
+}
+
+#ybqvnzwwpb .gt_font_italic {
+  font-style: italic;
+}
+
+#ybqvnzwwpb .gt_super {
+  font-size: 65%;
+}
+
+#ybqvnzwwpb .gt_footnote_marks {
+  font-size: 75%;
+  vertical-align: 0.4em;
+  position: initial;
+}
+
+#ybqvnzwwpb .gt_asterisk {
+  font-size: 100%;
+  vertical-align: 0;
+}
+
+#ybqvnzwwpb .gt_indent_1 {
+  text-indent: 5px;
+}
+
+#ybqvnzwwpb .gt_indent_2 {
+  text-indent: 10px;
+}
+
+#ybqvnzwwpb .gt_indent_3 {
+  text-indent: 15px;
+}
+
+#ybqvnzwwpb .gt_indent_4 {
+  text-indent: 20px;
+}
+
+#ybqvnzwwpb .gt_indent_5 {
+  text-indent: 25px;
+}
+
+#ybqvnzwwpb .katex-display {
+  display: inline-flex !important;
+  margin-bottom: 0.75em !important;
+}
+
+#ybqvnzwwpb div.Reactable > div.rt-table > div.rt-thead > div.rt-tr.rt-tr-group-header > div.rt-th-group:after {
+  height: 0px !important;
+}
+</style>
+
+<table class="gt_table caption-top table table-sm table-striped small" data-quarto-bootstrap="false">
+<thead>
+<tr class="gt_col_headings header">
+<th id="a::stub" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col"></th>
+<th id="Attribution-Total" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Attribution Total</th>
+<th id="Reported-ITD-Return" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Reported ITD Return</th>
+<th id="Difference" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Difference</th>
+</tr>
+</thead>
+<tbody class="gt_table_body">
+<tr class="odd">
+<th id="stub_1_1" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Bulls_Not_Bears</th>
+<td class="gt_row gt_center" headers="stub_1_1 Attribution Total">−3.62%</td>
+<td class="gt_row gt_center" headers="stub_1_1 Reported ITD Return">−3.62%</td>
+<td class="gt_row gt_center" headers="stub_1_1 Difference">0.00000000</td>
+</tr>
+<tr class="even">
+<th id="stub_1_2" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Here_Comes_The_Bull</th>
+<td class="gt_row gt_center" headers="stub_1_2 Attribution Total">0.28%</td>
+<td class="gt_row gt_center" headers="stub_1_2 Reported ITD Return">0.28%</td>
+<td class="gt_row gt_center" headers="stub_1_2 Difference">0.00000000</td>
+</tr>
+<tr class="odd">
+<th id="stub_1_3" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">New_Life</th>
+<td class="gt_row gt_center" headers="stub_1_3 Attribution Total">−0.10%</td>
+<td class="gt_row gt_center" headers="stub_1_3 Reported ITD Return">−0.10%</td>
+<td class="gt_row gt_center" headers="stub_1_3 Difference">0.00000000</td>
+</tr>
+<tr class="even">
+<th id="stub_1_4" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Sharpe_Shooters</th>
+<td class="gt_row gt_center" headers="stub_1_4 Attribution Total">0.14%</td>
+<td class="gt_row gt_center" headers="stub_1_4 Reported ITD Return">0.14%</td>
+<td class="gt_row gt_center" headers="stub_1_4 Difference">0.00000000</td>
+</tr>
+<tr class="odd">
+<th id="stub_1_5" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">The_Bigger_Short</th>
+<td class="gt_row gt_center" headers="stub_1_5 Attribution Total">0.42%</td>
+<td class="gt_row gt_center" headers="stub_1_5 Reported ITD Return">0.42%</td>
+<td class="gt_row gt_center" headers="stub_1_5 Difference">0.00000000</td>
+</tr>
+</tbody><tfoot>
+<tr class="gt_sourcenotes odd">
+<td colspan="4" class="gt_sourcenote"><strong>Attribution Total:</strong> sum of every ticker’s Carino-linked since-inception contribution.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="4" class="gt_sourcenote"><strong>Reported ITD Return:</strong> the fund’s compounded since-inception return implied by its daily equity curve, used as the reconciliation target.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="4" class="gt_sourcenote"><strong>Difference:</strong> Attribution Total minus Reported ITD Return; expected to be ~0 (floating-point only). A material difference would indicate a data or linking issue rather than being forced to zero.</td>
+</tr>
+</tfoot>
+
+</table>
+
+</div>
+</div>
+</div>
+</section>
+<section id="selected-fund-detail" class="level3">
+<h3 class="anchored" data-anchor-id="selected-fund-detail">Selected Fund Detail</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div class="plotly html-widget html-fill-item" id="htmlwidget-0d2713ed077b1b92ffaf" style="width:100%;height:464px;"></div>
+<script type="application/json" data-for="htmlwidget-0d2713ed077b1b92ffaf">{"x":{"visdat":{"1b24656300fd":["function () ","plotlyVisDat"],"1b247e7f751":["function () ","data"],"1b242a3c05ef":["function () ","data"],"1b247e178ab3":["function () ","data"],"1b242fb3308b":["function () ","data"],"1b2455724bf6":["function () ","data"]},"cur_data":"1b2455724bf6","attrs":{"1b247e7f751":{"alpha_stroke":1,"sizes":[10,100],"spans":[1,20],"x":{},"y":{},"type":"bar","orientation":"h","marker":{"color":{}},"visible":true,"name":"Bulls_Not_Bears","showlegend":false,"inherit":true},"1b242a3c05ef":{"alpha_stroke":1,"sizes":[10,100],"spans":[1,20],"x":{},"y":{},"type":"bar","orientation":"h","marker":{"color":{}},"visible":false,"name":"Here_Comes_The_Bull","showlegend":false,"inherit":true},"1b247e178ab3":{"alpha_stroke":1,"sizes":[10,100],"spans":[1,20],"x":{},"y":{},"type":"bar","orientation":"h","marker":{"color":{}},"visible":false,"name":"New_Life","showlegend":false,"inherit":true},"1b242fb3308b":{"alpha_stroke":1,"sizes":[10,100],"spans":[1,20],"x":{},"y":{},"type":"bar","orientation":"h","marker":{"color":{}},"visible":false,"name":"Sharpe_Shooters","showlegend":false,"inherit":true},"1b2455724bf6":{"alpha_stroke":1,"sizes":[10,100],"spans":[1,20],"x":{},"y":{},"type":"bar","orientation":"h","marker":{"color":{}},"visible":false,"name":"The_Bigger_Short","showlegend":false,"inherit":true}},"layout":{"margin":{"b":40,"l":60,"t":25,"r":10},"title":"Largest Contributors and Detractors (Selected Fund)","xaxis":{"domain":[0,1],"automargin":true,"title":"Return Contribution","tickformat":".1%"},"yaxis":{"domain":[0,1],"automargin":true,"title":"","tickmode":"array","tickvals":[1,2,3,4,5,6,7,8,9,10,11,12,13],"ticktext":["PBF","DINO","REI","MPC","VLO","DK","PSX","PARR","LPG","CLMT","FET","TDW","CVI"]},"showlegend":false,"updatemenus":[{"type":"dropdown","active":0,"x":0,"xanchor":"left","y":1.1499999999999999,"buttons":[{"method":"update","args":[{"visible":[true,false,false,false,false]},{"yaxis":{"title":"","tickmode":"array","tickvals":[1,2,3,4,5,6,7,8,9,10,11,12,13],"ticktext":["PBF","DINO","REI","MPC","VLO","DK","PSX","PARR","LPG","CLMT","FET","TDW","CVI"]}}],"label":"Bulls_Not_Bears"},{"method":"update","args":[{"visible":[false,true,false,false,false]},{"yaxis":{"title":"","tickmode":"array","tickvals":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"ticktext":["MSTR","BMNR","RBLX","WIX","DUOL","RPD","MNDY","HYMC","CLYM","COIN","MU","DOCN","INTC","All Other Positions","VOO","AXTI"]}}],"label":"Here_Comes_The_Bull"},{"method":"update","args":[{"visible":[false,false,true,false,false]},{"yaxis":{"title":"","tickmode":"array","tickvals":[1,2,3,4,5,6,7,8,9,10,11],"ticktext":["SPY","QQQ","XOM","IWM","GEV","WMT","JPM","GS","ETN","GOOGL","MSFT"]}}],"label":"New_Life"},{"method":"update","args":[{"visible":[false,false,false,true,false]},{"yaxis":{"title":"","tickmode":"array","tickvals":[1,2,3,4,5,6,7,8],"ticktext":["RSP","OIH","AIRR","COPX","KBWB","USRT","XBI","PSI"]}}],"label":"Sharpe_Shooters"},{"method":"update","args":[{"visible":[false,false,false,false,true]},{"yaxis":{"title":"","tickmode":"array","tickvals":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"ticktext":["VLO","MPC","PSX","META","STLD","CF","All Other Positions","MRVL","KEYS","ROST","CIEN","FTNT","AKAM","DDOG","INTC","WBD"]}}],"label":"The_Bigger_Short"}]}],"hovermode":"closest"},"source":"A","config":{"modeBarButtonsToAdd":["hoverclosest","hovercompare"],"showSendToCloud":false},"data":[{"x":[-0.0046937680802510698,-0.0043870670427604876,-0.0042149610550609728,-0.0040752604709571264,-0.0037244240847551001,-0.0036925401927564703,-0.0032050089699085685,-0.0021608120817883389,-0.0019974873822413181,-0.0011473274942818315,-0.0011433498027121154,-0.00099381668991832366,-0.0007736673132729111],"y":[1,2,3,4,5,6,7,8,9,10,11,12,13],"type":"bar","orientation":"h","marker":{"color":["#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15"],"line":{"color":"rgba(31,119,180,1)"}},"visible":true,"name":"Bulls_Not_Bears","showlegend":false,"error_y":{"color":"rgba(31,119,180,1)"},"error_x":{"color":"rgba(31,119,180,1)"},"xaxis":"x","yaxis":"y","frame":null},{"x":[-0.0012173758415073271,-0.00092794985426589919,-0.00075583887869932456,-0.00072757760777655129,-0.00060160057990439532,-0.00044620575815113782,-0.0004014941858936398,-0.00039103243952942385,-0.0003811056782091192,-0.00037236898498360849,0.00041908269319412405,0.00087835329815173237,0.0011427179153665357,0.0013988441703373449,0.0023511640843544173,0.0028273601880472029],"y":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"type":"bar","orientation":"h","marker":{"color":["#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c"],"line":{"color":"rgba(255,127,14,1)"}},"visible":false,"name":"Here_Comes_The_Bull","showlegend":false,"error_y":{"color":"rgba(255,127,14,1)"},"error_x":{"color":"rgba(255,127,14,1)"},"xaxis":"x","yaxis":"y","frame":null},{"x":[-0.0035661482095999198,-0.0025938485592694313,-0.0025632825972822459,-0.00046884279945763163,0.00025054836094713374,0.00066522914095508152,0.00081333658346792069,0.0014768589934978848,0.001505756612447442,0.0015534681418546193,0.0019028684657027561],"y":[1,2,3,4,5,6,7,8,9,10,11],"type":"bar","orientation":"h","marker":{"color":["#a50f15","#a50f15","#a50f15","#a50f15","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c"],"line":{"color":"rgba(44,160,44,1)"}},"visible":false,"name":"New_Life","showlegend":false,"error_y":{"color":"rgba(44,160,44,1)"},"error_x":{"color":"rgba(44,160,44,1)"},"xaxis":"x","yaxis":"y","frame":null},{"x":[-0.002353242327713776,-0.00031300744152532142,-2.2542012557646985e-05,0.00014436234239897594,0.00047801159804555126,0.00051592444785445672,0.00057809896442361896,0.0023631561161647149],"y":[1,2,3,4,5,6,7,8],"type":"bar","orientation":"h","marker":{"color":["#a50f15","#a50f15","#a50f15","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c"],"line":{"color":"rgba(214,39,40,1)"}},"visible":false,"name":"Sharpe_Shooters","showlegend":false,"error_y":{"color":"rgba(214,39,40,1)"},"error_x":{"color":"rgba(214,39,40,1)"},"xaxis":"x","yaxis":"y","frame":null},{"x":[-0.0012133440916756082,-0.00090423599857384967,-0.00054018877702201676,-0.00038159620992551035,-0.00032727425523895861,-0.00031356909722334215,0.0002113193785497391,0.00027442650942377804,0.00031051609533509224,0.0003164315360067643,0.00045910882964208855,0.00052963790481297054,0.00070566994385621001,0.00093891314973543021,0.00097806283565209096,0.0031330576399400483],"y":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"type":"bar","orientation":"h","marker":{"color":["#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#a50f15","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c","#006d2c"],"line":{"color":"rgba(148,103,189,1)"}},"visible":false,"name":"The_Bigger_Short","showlegend":false,"error_y":{"color":"rgba(148,103,189,1)"},"error_x":{"color":"rgba(148,103,189,1)"},"xaxis":"x","yaxis":"y","frame":null}],"highlight":{"on":"plotly_click","persistent":false,"dynamic":false,"selectize":false,"opacityDim":0.20000000000000001,"selected":{"opacity":1},"debounce":0},"shinyEvents":["plotly_hover","plotly_click","plotly_selected","plotly_relayout","plotly_brushed","plotly_brushing","plotly_clickannotation","plotly_doubleclick","plotly_deselect","plotly_afterplot","plotly_sunburstclick"],"base_url":"https://plot.ly"},"evals":[],"jsHooks":[]}</script>
+</div>
+</div>
+<div class="callout callout-style-simple callout-note">
+<div class="callout-body d-flex">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-body-container">
+<p>This view ranks a single fund’s up-to-15 largest contributors and detractors by absolute since-inception contribution, with any remaining positions summarized in a single <strong>All Other Positions</strong> bar — avoiding a wall of 50-100+ individual bars. Use the dropdown to switch funds.</p>
+</div>
+</div>
+</div>
+</section>
+</div>
+<div id="tabset-1-4" class="tab-pane" role="tabpanel" aria-labelledby="tabset-1-4-tab">
+<section id="underwater-plot" class="level3">
+<h3 class="anchored" data-anchor-id="underwater-plot">Underwater Plot</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div class="plotly html-widget html-fill-item" id="htmlwidget-676ecc26f08eb2728967" style="width:100%;height:464px;"></div>
+<script type="application/json" data-for="htmlwidget-676ecc26f08eb2728967">{"x":{"data":[{"x":[20717],"y":[0],"text":"date: 2026-09-21<br />drawdown: 0<br />team: Bulls_Not_Bears","type":"scatter","mode":"lines","line":{"width":3.0236220472440949,"color":"rgba(248,118,109,1)","dash":"solid"},"hoveron":"points","name":"Bulls_Not_Bears","legendgroup":"Bulls_Not_Bears","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[20717],"y":[0],"text":"date: 2026-09-21<br />drawdown: 0<br />team: Here_Comes_The_Bull","type":"scatter","mode":"lines","line":{"width":3.0236220472440949,"color":"rgba(163,165,0,1)","dash":"solid"},"hoveron":"points","name":"Here_Comes_The_Bull","legendgroup":"Here_Comes_The_Bull","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[20717],"y":[0],"text":"date: 2026-09-21<br />drawdown: 0<br />team: New_Life","type":"scatter","mode":"lines","line":{"width":3.0236220472440949,"color":"rgba(0,191,125,1)","dash":"solid"},"hoveron":"points","name":"New_Life","legendgroup":"New_Life","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[20717],"y":[0],"text":"date: 2026-09-21<br />drawdown: 0<br />team: Sharpe_Shooters","type":"scatter","mode":"lines","line":{"width":3.0236220472440949,"color":"rgba(0,176,246,1)","dash":"solid"},"hoveron":"points","name":"Sharpe_Shooters","legendgroup":"Sharpe_Shooters","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[20717],"y":[0],"text":"date: 2026-09-21<br />drawdown: 0<br />team: The_Bigger_Short","type":"scatter","mode":"lines","line":{"width":3.0236220472440949,"color":"rgba(231,107,243,1)","dash":"solid"},"hoveron":"points","name":"The_Bigger_Short","legendgroup":"The_Bigger_Short","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null},{"x":[20717],"y":[0],"text":"date: 2026-09-21<br />drawdown: 0<br />team: IVV","type":"scatter","mode":"lines","line":{"width":4.1574803149606305,"color":"rgba(0,0,0,1)","dash":"dash"},"hoveron":"points","name":"IVV","legendgroup":"IVV","showlegend":true,"xaxis":"x","yaxis":"y","hoverinfo":"text","frame":null}],"layout":{"margin":{"t":43.098381070983812,"r":7.9701120797011216,"b":24.707347447073481,"l":47.023661270236623},"paper_bgcolor":"rgba(255,255,255,1)","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243},"title":{"text":"Underwater Performance","font":{"color":"rgba(0,0,0,1)","family":"","size":19.128268991282692},"x":0,"xref":"paper"},"xaxis":{"domain":[0,1],"automargin":true,"type":"linear","autorange":false,"range":[20716.950000000001,20717.049999999999],"tickmode":"array","ticktext":["Sep 21"],"tickvals":[20717],"categoryorder":"array","categoryarray":["Sep 21"],"nticks":null,"ticks":"","tickcolor":null,"ticklen":3.9850560398505608,"tickwidth":0,"showticklabels":true,"tickfont":{"color":"rgba(77,77,77,1)","family":"","size":12.7521793275218},"tickangle":-0,"showline":false,"linecolor":null,"linewidth":0,"showgrid":true,"gridcolor":"rgba(235,235,235,1)","gridwidth":0.72455564360919278,"zeroline":false,"anchor":"y","title":{"text":"","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243}},"hoverformat":".2f"},"yaxis":{"domain":[0,1],"automargin":true,"type":"linear","autorange":false,"range":[-0.050000000000000003,0.050000000000000003],"tickmode":"array","ticktext":["-5%","-2%","0%","3%","5%"],"tickvals":[-0.050000000000000003,-0.025000000000000001,0,0.025000000000000008,0.050000000000000003],"categoryorder":"array","categoryarray":["-5%","-2%","0%","3%","5%"],"nticks":null,"ticks":"","tickcolor":null,"ticklen":3.9850560398505608,"tickwidth":0,"showticklabels":true,"tickfont":{"color":"rgba(77,77,77,1)","family":"","size":12.7521793275218},"tickangle":-0,"showline":false,"linecolor":null,"linewidth":0,"showgrid":true,"gridcolor":"rgba(235,235,235,1)","gridwidth":0.72455564360919278,"zeroline":false,"anchor":"x","title":{"text":"Drawdown from Prior Peak","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243}},"hoverformat":".2f"},"shapes":[],"showlegend":true,"legend":{"bgcolor":null,"bordercolor":null,"borderwidth":0,"font":{"color":"rgba(0,0,0,1)","family":"","size":12.7521793275218},"orientation":"h","x":0.5,"y":-0.14999999999999999,"xanchor":"center","yanchor":"top","title":{"text":"Fund","font":{"color":"rgba(0,0,0,1)","family":"","size":15.940224159402243}}},"hovermode":"closest","barmode":"relative"},"config":{"doubleClick":"reset","modeBarButtonsToAdd":["hoverclosest","hovercompare"],"showSendToCloud":false},"source":"A","attrs":{"1b2410b944b4":{"x":{},"y":{},"colour":{},"type":"scatter"},"1b2442cc5f07":{"x":{},"y":{},"colour":{}}},"cur_data":"1b2410b944b4","visdat":{"1b2410b944b4":["function (y) ","x"],"1b2442cc5f07":["function (y) ","x"]},"highlight":{"on":"plotly_click","persistent":false,"dynamic":false,"selectize":false,"opacityDim":0.20000000000000001,"selected":{"opacity":1},"debounce":0},"shinyEvents":["plotly_hover","plotly_click","plotly_selected","plotly_relayout","plotly_brushed","plotly_brushing","plotly_clickannotation","plotly_doubleclick","plotly_deselect","plotly_afterplot","plotly_sunburstclick"],"base_url":"https://plot.ly"},"evals":[],"jsHooks":[]}</script>
+</div>
+</div>
+</section>
+<section id="advanced-quant-risk" class="level3">
+<h3 class="anchored" data-anchor-id="advanced-quant-risk">Advanced Quant Risk</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div id="pgqarekldv" style="padding-left:0px;padding-right:0px;padding-top:10px;padding-bottom:10px;overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
+<style>#pgqarekldv table {
+  font-family: system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#pgqarekldv thead, #pgqarekldv tbody, #pgqarekldv tfoot, #pgqarekldv tr, #pgqarekldv td, #pgqarekldv th {
+  border-style: none;
+}
+
+#pgqarekldv p {
+  margin: 0;
+  padding: 0;
+}
+
+#pgqarekldv .gt_table {
+  display: table;
+  border-collapse: collapse;
+  line-height: normal;
+  margin-left: auto;
+  margin-right: auto;
+  color: #333333;
+  font-size: 16px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_caption {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+#pgqarekldv .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+
+#pgqarekldv .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 3px;
+  padding-bottom: 5px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+
+#pgqarekldv .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+
+#pgqarekldv .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+#pgqarekldv .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+
+#pgqarekldv .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+
+#pgqarekldv .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+
+#pgqarekldv .gt_spanner_row {
+  border-bottom-style: hidden;
+}
+
+#pgqarekldv .gt_group_heading {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  text-align: left;
+}
+
+#pgqarekldv .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#pgqarekldv .gt_from_md > :first-child {
+  margin-top: 0;
+}
+
+#pgqarekldv .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+
+#pgqarekldv .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+
+#pgqarekldv .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#pgqarekldv .gt_stub_row_group {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+  vertical-align: top;
+}
+
+#pgqarekldv .gt_row_group_first td {
+  border-top-width: 2px;
+}
+
+#pgqarekldv .gt_row_group_first th {
+  border-top-width: 2px;
+}
+
+#pgqarekldv .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#pgqarekldv .gt_first_summary_row {
+  border-top-style: solid;
+  border-top-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_first_summary_row.thick {
+  border-top-width: 2px;
+}
+
+#pgqarekldv .gt_last_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#pgqarekldv .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_last_grand_summary_row_top {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: double;
+  border-bottom-width: 6px;
+  border-bottom-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+#pgqarekldv .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#pgqarekldv .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#pgqarekldv .gt_sourcenote {
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#pgqarekldv .gt_left {
+  text-align: left;
+}
+
+#pgqarekldv .gt_center {
+  text-align: center;
+}
+
+#pgqarekldv .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#pgqarekldv .gt_font_normal {
+  font-weight: normal;
+}
+
+#pgqarekldv .gt_font_bold {
+  font-weight: bold;
+}
+
+#pgqarekldv .gt_font_italic {
+  font-style: italic;
+}
+
+#pgqarekldv .gt_super {
+  font-size: 65%;
+}
+
+#pgqarekldv .gt_footnote_marks {
+  font-size: 75%;
+  vertical-align: 0.4em;
+  position: initial;
+}
+
+#pgqarekldv .gt_asterisk {
+  font-size: 100%;
+  vertical-align: 0;
+}
+
+#pgqarekldv .gt_indent_1 {
+  text-indent: 5px;
+}
+
+#pgqarekldv .gt_indent_2 {
+  text-indent: 10px;
+}
+
+#pgqarekldv .gt_indent_3 {
+  text-indent: 15px;
+}
+
+#pgqarekldv .gt_indent_4 {
+  text-indent: 20px;
+}
+
+#pgqarekldv .gt_indent_5 {
+  text-indent: 25px;
+}
+
+#pgqarekldv .katex-display {
+  display: inline-flex !important;
+  margin-bottom: 0.75em !important;
+}
+
+#pgqarekldv div.Reactable > div.rt-table > div.rt-thead > div.rt-tr.rt-tr-group-header > div.rt-th-group:after {
+  height: 0px !important;
+}
+</style>
+
+<table class="gt_table caption-top table table-sm table-striped small" data-quarto-bootstrap="false">
+<thead>
+<tr class="gt_col_headings header">
+<th id="a::stub" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col"></th>
+<th id="Max-Drawdown" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Max Drawdown</th>
+<th id="Ann.-Volatility" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Ann. Volatility</th>
+<th id="Sortino" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Sortino</th>
+<th id="Skewness" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Skewness</th>
+<th id="Kurtosis" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Kurtosis</th>
+<th id="VaR-95%" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">VaR 95%</th>
+<th id="CVaR-95%" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">CVaR 95%</th>
+<th id="a10D-Beta" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">10D Beta</th>
+<th id="Current-Week-TO" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Current Week TO</th>
+<th id="Net-Exposure" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Net Exposure</th>
+<th id="Gross-Exposure" class="gt_col_heading gt_columns_bottom_border gt_center" data-quarto-table-cell-role="th" scope="col">Gross Exposure</th>
+</tr>
+</thead>
+<tbody class="gt_table_body">
+<tr class="odd">
+<th id="stub_1_1" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Bulls_Not_Bears</th>
+<td class="gt_row gt_center" headers="stub_1_1 Max Drawdown">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_1 Ann. Volatility">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 Sortino">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 Skewness">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 Kurtosis">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 VaR 95%">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 CVaR 95%">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 10D Beta">—</td>
+<td class="gt_row gt_center" headers="stub_1_1 Current Week TO">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_1 Net Exposure">100.00%</td>
+<td class="gt_row gt_center" headers="stub_1_1 Gross Exposure">100.00%</td>
+</tr>
+<tr class="even">
+<th id="stub_1_2" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Here_Comes_The_Bull</th>
+<td class="gt_row gt_center" headers="stub_1_2 Max Drawdown">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_2 Ann. Volatility">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 Sortino">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 Skewness">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 Kurtosis">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 VaR 95%">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 CVaR 95%">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 10D Beta">—</td>
+<td class="gt_row gt_center" headers="stub_1_2 Current Week TO">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_2 Net Exposure">45.00%</td>
+<td class="gt_row gt_center" headers="stub_1_2 Gross Exposure">100.00%</td>
+</tr>
+<tr class="odd">
+<th id="stub_1_3" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">New_Life</th>
+<td class="gt_row gt_center" headers="stub_1_3 Max Drawdown">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_3 Ann. Volatility">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 Sortino">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 Skewness">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 Kurtosis">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 VaR 95%">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 CVaR 95%">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 10D Beta">—</td>
+<td class="gt_row gt_center" headers="stub_1_3 Current Week TO">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_3 Net Exposure">29.00%</td>
+<td class="gt_row gt_center" headers="stub_1_3 Gross Exposure">111.00%</td>
+</tr>
+<tr class="even">
+<th id="stub_1_4" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">Sharpe_Shooters</th>
+<td class="gt_row gt_center" headers="stub_1_4 Max Drawdown">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_4 Ann. Volatility">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 Sortino">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 Skewness">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 Kurtosis">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 VaR 95%">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 CVaR 95%">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 10D Beta">—</td>
+<td class="gt_row gt_center" headers="stub_1_4 Current Week TO">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_4 Net Exposure">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_4 Gross Exposure">84.00%</td>
+</tr>
+<tr class="odd">
+<th id="stub_1_5" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">The_Bigger_Short</th>
+<td class="gt_row gt_center" headers="stub_1_5 Max Drawdown">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_5 Ann. Volatility">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 Sortino">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 Skewness">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 Kurtosis">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 VaR 95%">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 CVaR 95%">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 10D Beta">—</td>
+<td class="gt_row gt_center" headers="stub_1_5 Current Week TO">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_5 Net Exposure">60.00%</td>
+<td class="gt_row gt_center" headers="stub_1_5 Gross Exposure">140.00%</td>
+</tr>
+<tr class="even">
+<th id="stub_1_6" class="gt_row gt_center gt_stub" data-quarto-table-cell-role="th" scope="row">IVV</th>
+<td class="gt_row gt_center" headers="stub_1_6 Max Drawdown" style="background-color: #F2F2F2; font-weight: bold">0.00%</td>
+<td class="gt_row gt_center" headers="stub_1_6 Ann. Volatility" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 Sortino" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 Skewness" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 Kurtosis" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 VaR 95%" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 CVaR 95%" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 10D Beta" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 Current Week TO" style="background-color: #F2F2F2; font-weight: bold">—</td>
+<td class="gt_row gt_center" headers="stub_1_6 Net Exposure" style="background-color: #F2F2F2; font-weight: bold">100.00%</td>
+<td class="gt_row gt_center" headers="stub_1_6 Gross Exposure" style="background-color: #F2F2F2; font-weight: bold">100.00%</td>
+</tr>
+</tbody><tfoot>
+<tr class="gt_sourcenotes odd">
+<td colspan="12" class="gt_sourcenote"><strong>Fund:</strong> the student fund name, or IVV shown for reference as the trading benchmark.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="12" class="gt_sourcenote"><strong>Max Drawdown:</strong> largest peak-to-trough decline in the cumulative return series since inception.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="12" class="gt_sourcenote"><strong>Ann. Volatility:</strong> annualized standard deviation of daily returns, computed since inception.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="12" class="gt_sourcenote"><strong>Sortino:</strong> annualized return relative to downside deviation, computed since inception, penalizing only returns below a 0% minimum acceptable return.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="12" class="gt_sourcenote"><strong>Skewness:</strong> sample skewness of daily returns, computed since inception.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="12" class="gt_sourcenote"><strong>Kurtosis:</strong> sample kurtosis (not excess kurtosis) of daily returns, computed since inception.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="12" class="gt_sourcenote"><strong>VaR 95%:</strong> empirical 5th percentile of daily returns (R quantile type 7), computed since inception. Retains the sign of returns: losses are negative.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="12" class="gt_sourcenote"><strong>CVaR 95%:</strong> mean daily return conditional on being at or below the VaR 95% threshold, computed since inception. Retains the sign of returns: losses are negative.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="12" class="gt_sourcenote"><strong>10D Beta:</strong> rolling regression beta of daily portfolio return on benchmark return, using the trailing 10 trading days. Not applicable for IVV.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="12" class="gt_sourcenote"><strong>Current Week TO:</strong> sum of absolute weight changes across position matrix submissions effective during the current week.</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="12" class="gt_sourcenote"><strong>Net Exposure:</strong> sum of current position weights (long minus short).</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="12" class="gt_sourcenote"><strong>Gross Exposure:</strong> sum of absolute current position weights (long plus short).</td>
+</tr>
+<tr class="gt_sourcenotes odd">
+<td colspan="12" class="gt_sourcenote">Returns are computed from adjusted closing prices.</td>
+</tr>
+<tr class="gt_sourcenotes even">
+<td colspan="12" class="gt_sourcenote">Source: Yahoo Finance</td>
+</tr>
+</tfoot>
+
+</table>
+
+</div>
+</div>
+</div>
+</section>
+<section id="rolling-active-exposure" class="level3">
+<h3 class="anchored" data-anchor-id="rolling-active-exposure">Rolling Active Exposure</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div style="padding: 1em; border: 1px solid #ddd; border-radius: 4px; color: #555;">No fund has 10 daily return observations yet, so rolling beta isn't available.</div>
+</div>
+</div>
+</section>
+<section id="operational-status" class="level3">
+<h3 class="anchored" data-anchor-id="operational-status">Operational Status</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div id="hrdfucmbwa" style="padding-left:0px;padding-right:0px;padding-top:10px;padding-bottom:10px;overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
+<style>#hrdfucmbwa table {
+  font-family: system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#hrdfucmbwa thead, #hrdfucmbwa tbody, #hrdfucmbwa tfoot, #hrdfucmbwa tr, #hrdfucmbwa td, #hrdfucmbwa th {
+  border-style: none;
+}
+
+#hrdfucmbwa p {
+  margin: 0;
+  padding: 0;
+}
+
+#hrdfucmbwa .gt_table {
+  display: table;
+  border-collapse: collapse;
+  line-height: normal;
+  margin-left: auto;
+  margin-right: auto;
+  color: #333333;
+  font-size: 12px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_caption {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+#hrdfucmbwa .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+
+#hrdfucmbwa .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 3px;
+  padding-bottom: 5px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+
+#hrdfucmbwa .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+
+#hrdfucmbwa .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+#hrdfucmbwa .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+
+#hrdfucmbwa .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+
+#hrdfucmbwa .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+
+#hrdfucmbwa .gt_spanner_row {
+  border-bottom-style: hidden;
+}
+
+#hrdfucmbwa .gt_group_heading {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  text-align: left;
+}
+
+#hrdfucmbwa .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#hrdfucmbwa .gt_from_md > :first-child {
+  margin-top: 0;
+}
+
+#hrdfucmbwa .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+
+#hrdfucmbwa .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+
+#hrdfucmbwa .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#hrdfucmbwa .gt_stub_row_group {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+  vertical-align: top;
+}
+
+#hrdfucmbwa .gt_row_group_first td {
+  border-top-width: 2px;
+}
+
+#hrdfucmbwa .gt_row_group_first th {
+  border-top-width: 2px;
+}
+
+#hrdfucmbwa .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#hrdfucmbwa .gt_first_summary_row {
+  border-top-style: solid;
+  border-top-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_first_summary_row.thick {
+  border-top-width: 2px;
+}
+
+#hrdfucmbwa .gt_last_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#hrdfucmbwa .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_last_grand_summary_row_top {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: double;
+  border-bottom-width: 6px;
+  border-bottom-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+#hrdfucmbwa .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#hrdfucmbwa .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#hrdfucmbwa .gt_sourcenote {
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#hrdfucmbwa .gt_left {
+  text-align: left;
+}
+
+#hrdfucmbwa .gt_center {
+  text-align: center;
+}
+
+#hrdfucmbwa .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#hrdfucmbwa .gt_font_normal {
+  font-weight: normal;
+}
+
+#hrdfucmbwa .gt_font_bold {
+  font-weight: bold;
+}
+
+#hrdfucmbwa .gt_font_italic {
+  font-style: italic;
+}
+
+#hrdfucmbwa .gt_super {
+  font-size: 65%;
+}
+
+#hrdfucmbwa .gt_footnote_marks {
+  font-size: 75%;
+  vertical-align: 0.4em;
+  position: initial;
+}
+
+#hrdfucmbwa .gt_asterisk {
+  font-size: 100%;
+  vertical-align: 0;
+}
+
+#hrdfucmbwa .gt_indent_1 {
+  text-indent: 5px;
+}
+
+#hrdfucmbwa .gt_indent_2 {
+  text-indent: 10px;
+}
+
+#hrdfucmbwa .gt_indent_3 {
+  text-indent: 15px;
+}
+
+#hrdfucmbwa .gt_indent_4 {
+  text-indent: 20px;
+}
+
+#hrdfucmbwa .gt_indent_5 {
+  text-indent: 25px;
+}
+
+#hrdfucmbwa .katex-display {
+  display: inline-flex !important;
+  margin-bottom: 0.75em !important;
+}
+
+#hrdfucmbwa div.Reactable > div.rt-table > div.rt-thead > div.rt-tr.rt-tr-group-header > div.rt-th-group:after {
+  height: 0px !important;
+}
+</style>
+
+<table class="gt_table caption-top table table-sm table-striped small" data-quarto-bootstrap="false">
+<thead>
+<tr class="gt_col_headings header">
+<th id="a::stub" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col"></th>
+<th id="Effective-Matrix" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col">Effective Matrix</th>
+<th id="Matrix-Date" class="gt_col_heading gt_columns_bottom_border gt_right" data-quarto-table-cell-role="th" scope="col">Matrix Date</th>
+<th id="Effective-Date" class="gt_col_heading gt_columns_bottom_border gt_right" data-quarto-table-cell-role="th" scope="col">Effective Date</th>
+<th id="Latest-Attempt" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col">Latest Attempt</th>
+<th id="Submission-Message" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col">Submission Message</th>
+<th id="Market-Data" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col">Market Data</th>
+<th id="Market-Warning" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col">Market Warning</th>
+</tr>
+</thead>
+<tbody class="gt_table_body">
+<tr class="odd">
+<th id="stub_1_1" class="gt_row gt_left gt_stub" data-quarto-table-cell-role="th" scope="row">Sharpe_Shooters</th>
+<td class="gt_row gt_left" headers="stub_1_1 Effective Matrix">PositionMatrix-2026-09-18-Sharpe_Shooters.csv</td>
+<td class="gt_row gt_right" headers="stub_1_1 Matrix Date">2026-09-18</td>
+<td class="gt_row gt_right" headers="stub_1_1 Effective Date">2026-09-21</td>
+<td class="gt_row gt_left" headers="stub_1_1 Latest Attempt">valid</td>
+<td class="gt_row gt_left" headers="stub_1_1 Submission Message">Valid submission</td>
+<td class="gt_row gt_left" headers="stub_1_1 Market Data">ok</td>
+<td class="gt_row gt_left" headers="stub_1_1 Market Warning">—</td>
+</tr>
+<tr class="even">
+<th id="stub_1_2" class="gt_row gt_left gt_stub" data-quarto-table-cell-role="th" scope="row">New_Life</th>
+<td class="gt_row gt_left" headers="stub_1_2 Effective Matrix">PositionMatrix-2026-09-18-New_Life.csv</td>
+<td class="gt_row gt_right" headers="stub_1_2 Matrix Date">2026-09-18</td>
+<td class="gt_row gt_right" headers="stub_1_2 Effective Date">2026-09-21</td>
+<td class="gt_row gt_left" headers="stub_1_2 Latest Attempt">valid</td>
+<td class="gt_row gt_left" headers="stub_1_2 Submission Message">Valid submission</td>
+<td class="gt_row gt_left" headers="stub_1_2 Market Data">ok</td>
+<td class="gt_row gt_left" headers="stub_1_2 Market Warning">—</td>
+</tr>
+<tr class="odd">
+<th id="stub_1_3" class="gt_row gt_left gt_stub" data-quarto-table-cell-role="th" scope="row">Bulls_Not_Bears</th>
+<td class="gt_row gt_left" headers="stub_1_3 Effective Matrix">PositionMatrix-2026-09-18-Bulls_Not_Bears.csv</td>
+<td class="gt_row gt_right" headers="stub_1_3 Matrix Date">2026-09-18</td>
+<td class="gt_row gt_right" headers="stub_1_3 Effective Date">2026-09-21</td>
+<td class="gt_row gt_left" headers="stub_1_3 Latest Attempt">valid</td>
+<td class="gt_row gt_left" headers="stub_1_3 Submission Message">Valid submission</td>
+<td class="gt_row gt_left" headers="stub_1_3 Market Data">ok</td>
+<td class="gt_row gt_left" headers="stub_1_3 Market Warning">—</td>
+</tr>
+<tr class="even">
+<th id="stub_1_4" class="gt_row gt_left gt_stub" data-quarto-table-cell-role="th" scope="row">Here_Comes_The_Bull</th>
+<td class="gt_row gt_left" headers="stub_1_4 Effective Matrix">PositionMatrix-2026-09-18-Here_Comes_The_Bull.csv</td>
+<td class="gt_row gt_right" headers="stub_1_4 Matrix Date">2026-09-18</td>
+<td class="gt_row gt_right" headers="stub_1_4 Effective Date">2026-09-21</td>
+<td class="gt_row gt_left" headers="stub_1_4 Latest Attempt">valid</td>
+<td class="gt_row gt_left" headers="stub_1_4 Submission Message">Valid submission</td>
+<td class="gt_row gt_left" headers="stub_1_4 Market Data">ok</td>
+<td class="gt_row gt_left" headers="stub_1_4 Market Warning">—</td>
+</tr>
+<tr class="odd">
+<th id="stub_1_5" class="gt_row gt_left gt_stub" data-quarto-table-cell-role="th" scope="row">The_Bigger_Short</th>
+<td class="gt_row gt_left" headers="stub_1_5 Effective Matrix">PositionMatrix-2026-09-18-TheBiggerShort.csv</td>
+<td class="gt_row gt_right" headers="stub_1_5 Matrix Date">2026-09-18</td>
+<td class="gt_row gt_right" headers="stub_1_5 Effective Date">2026-09-21</td>
+<td class="gt_row gt_left" headers="stub_1_5 Latest Attempt">valid</td>
+<td class="gt_row gt_left" headers="stub_1_5 Submission Message">Valid submission</td>
+<td class="gt_row gt_left" headers="stub_1_5 Market Data">ok</td>
+<td class="gt_row gt_left" headers="stub_1_5 Market Warning">—</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+</section>
+<section id="prototype-validation-exceptions" class="level3">
+<h3 class="anchored" data-anchor-id="prototype-validation-exceptions">Prototype Validation Exceptions</h3>
+<div class="cell">
+<div class="cell-output-display">
+<div id="mrctmlgfsb" style="padding-left:0px;padding-right:0px;padding-top:10px;padding-bottom:10px;overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
+<style>#mrctmlgfsb table {
+  font-family: system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#mrctmlgfsb thead, #mrctmlgfsb tbody, #mrctmlgfsb tfoot, #mrctmlgfsb tr, #mrctmlgfsb td, #mrctmlgfsb th {
+  border-style: none;
+}
+
+#mrctmlgfsb p {
+  margin: 0;
+  padding: 0;
+}
+
+#mrctmlgfsb .gt_table {
+  display: table;
+  border-collapse: collapse;
+  line-height: normal;
+  margin-left: auto;
+  margin-right: auto;
+  color: #333333;
+  font-size: 12px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_caption {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+#mrctmlgfsb .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+
+#mrctmlgfsb .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 3px;
+  padding-bottom: 5px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+
+#mrctmlgfsb .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+
+#mrctmlgfsb .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+#mrctmlgfsb .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+
+#mrctmlgfsb .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+
+#mrctmlgfsb .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+
+#mrctmlgfsb .gt_spanner_row {
+  border-bottom-style: hidden;
+}
+
+#mrctmlgfsb .gt_group_heading {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  text-align: left;
+}
+
+#mrctmlgfsb .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#mrctmlgfsb .gt_from_md > :first-child {
+  margin-top: 0;
+}
+
+#mrctmlgfsb .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+
+#mrctmlgfsb .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+
+#mrctmlgfsb .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#mrctmlgfsb .gt_stub_row_group {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+  vertical-align: top;
+}
+
+#mrctmlgfsb .gt_row_group_first td {
+  border-top-width: 2px;
+}
+
+#mrctmlgfsb .gt_row_group_first th {
+  border-top-width: 2px;
+}
+
+#mrctmlgfsb .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#mrctmlgfsb .gt_first_summary_row {
+  border-top-style: solid;
+  border-top-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_first_summary_row.thick {
+  border-top-width: 2px;
+}
+
+#mrctmlgfsb .gt_last_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#mrctmlgfsb .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_last_grand_summary_row_top {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: double;
+  border-bottom-width: 6px;
+  border-bottom-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+#mrctmlgfsb .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#mrctmlgfsb .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#mrctmlgfsb .gt_sourcenote {
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#mrctmlgfsb .gt_left {
+  text-align: left;
+}
+
+#mrctmlgfsb .gt_center {
+  text-align: center;
+}
+
+#mrctmlgfsb .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#mrctmlgfsb .gt_font_normal {
+  font-weight: normal;
+}
+
+#mrctmlgfsb .gt_font_bold {
+  font-weight: bold;
+}
+
+#mrctmlgfsb .gt_font_italic {
+  font-style: italic;
+}
+
+#mrctmlgfsb .gt_super {
+  font-size: 65%;
+}
+
+#mrctmlgfsb .gt_footnote_marks {
+  font-size: 75%;
+  vertical-align: 0.4em;
+  position: initial;
+}
+
+#mrctmlgfsb .gt_asterisk {
+  font-size: 100%;
+  vertical-align: 0;
+}
+
+#mrctmlgfsb .gt_indent_1 {
+  text-indent: 5px;
+}
+
+#mrctmlgfsb .gt_indent_2 {
+  text-indent: 10px;
+}
+
+#mrctmlgfsb .gt_indent_3 {
+  text-indent: 15px;
+}
+
+#mrctmlgfsb .gt_indent_4 {
+  text-indent: 20px;
+}
+
+#mrctmlgfsb .gt_indent_5 {
+  text-indent: 25px;
+}
+
+#mrctmlgfsb .katex-display {
+  display: inline-flex !important;
+  margin-bottom: 0.75em !important;
+}
+
+#mrctmlgfsb div.Reactable > div.rt-table > div.rt-thead > div.rt-tr.rt-tr-group-header > div.rt-th-group:after {
+  height: 0px !important;
+}
+</style>
+
+<table class="gt_table caption-top" data-quarto-bootstrap="false">
+<thead>
+<tr class="gt_heading header">
+<td colspan="5" class="gt_heading gt_title gt_font_normal gt_bottom_border">Injected Prototype Edge Cases</td>
+</tr>
+<tr class="gt_col_headings even">
+<th id="Fund" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col">Fund</th>
+<th id="Matrix-Date" class="gt_col_heading gt_columns_bottom_border gt_right" data-quarto-table-cell-role="th" scope="col">Matrix Date</th>
+<th id="Scenario" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col">Scenario</th>
+<th id="Status" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col">Status</th>
+<th id="Explanation" class="gt_col_heading gt_columns_bottom_border gt_left" data-quarto-table-cell-role="th" scope="col">Explanation</th>
+</tr>
+</thead>
+<tbody class="gt_table_body">
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>
+</div>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>
