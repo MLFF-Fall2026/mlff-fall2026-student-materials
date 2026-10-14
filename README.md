@@ -10,6 +10,7 @@ Admin
 - [Syllabus](https://github.com/MLFF-Fall2026/mlff-fall2026-student-materials/blob/main/Supporting/MLFF-Syllabus-Fall2026.pdf)
 - [Hedge Fund Exericse Guidelines](https://github.com/MLFF-Fall2026/mlff-fall2026-student-materials/blob/main/Supporting/MLFF-HedgeFundExercise-Fall2026.pdf)
 - [Demo of LeaderBoard that we will use to track student fund performance](https://mlff-fall2026.github.io/mlff-fall2026-student-materials/Supporting/LeaderBoardDemo/LeaderBoard-Demo.html)
+- [Live Hedge Fund Leaderboard](https://mlff-fall2026.github.io/mlff-fall2026-student-materials/Leaderboard/)
 - [Overview of (part of) our investable universe](https://mlff-fall2026.github.io/mlff-fall2026-student-materials/Topics/YahooFinanceEDA/03_eda.html)
 
 Systematic Investment Architecture
