@@ -1,0 +1,1527 @@
+---
+title: "Dimension Reduction: PCA and Autoencoders"
+author: Mike Aguilar
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute:
+  warning: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| warning: false
+#| code-fold: true
+#| code-summary: "Code"
+
+cat("\014")
+rm(list = ls())
+required <- c("here", "readxl", "dplyr", "tidyr", "ggplot2", "GGally", "torch")
+missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing)) {
+  stop("Install the following R packages before rendering: ",
+       paste(missing, collapse = ", "), ". For torch, also run torch::install_torch() as needed.")
+}
+suppressPackageStartupMessages({
+  library(here)
+  library(readxl)
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(GGally)
+  library(torch)
+})
+project_setup <- here("Supporting", "ProjectSetup.R")
+if (file.exists(project_setup)) source(project_setup)
+set.seed(2027)
+```
+
+# Background
+
+- You are an investment analyst at a global asset-management firm allocating capital across country equity markets using country equity ETFs.
+- You observe 11 macroeconomic and equity-market indicators for 100 fictional investable countries.
+- Your investment team wants a small number of measures summarizing each country's economic and market conditions.
+- We previously used PCA to reduce many correlated indicators into a few linear components.
+- Now the indicators may depend nonlinearly on underlying economic conditions. Can a neural-network autoencoder provide a more informative low-dimensional representation?
+- We will repeat the core PCA exercise, train autoencoders, and compare the methods on the same held-out countries.
+- A principal-component score or an autoencoder feature is not a trading signal. A high value does not by itself mean a country ETF is attractive.
+
+# Data
+
+## Acquisition
+
+::: {.callout-caution collapse="false" title="Task"}
+Load the data dictionary from `country_equity_indicators_autoencoder.xlsx`.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+input_file <- here("data", "country_equity_indicators_autoencoder.xlsx")
+if (!file.exists(input_file)) {
+  stop("Dataset not found: ", input_file,
+       ". Run SimulatedData-Autoencoder.R first.")
+}
+data_dictionary <- read_excel(input_file, sheet = "Data_Dictionary")
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+data_dictionary
+```
+:::
+
+::: {.callout-tip title="Question"}
+Before doing any quantitative analysis, which variables might belong together?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Growth & Momentum: GDP Growth, Industrial Production Growth, Earnings Growth, Equity Momentum.
+- Valuation: Forward P/E, Price-to-Book, Dividend Yield (likely opposite in direction to the first two).
+- Risk: Equity Volatility, FX Volatility, Inflation, Sovereign Risk Spread.
+- These are economic hypotheses, not guarantees that the empirical principal components will separate into three perfectly defined groups.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Load the `Data` sheet. Check country identifiers, dimensions, and indicator names.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+country_data <- read_excel(input_file, sheet = "Data")
+indicator_names <- setdiff(names(country_data), "country_code")
+stopifnot(length(indicator_names) == 11L, nrow(country_data) >= 60L,
+          !anyDuplicated(country_data$country_code))
+country_data <- as.data.frame(country_data)
+country_data$country_code <- as.character(country_data$country_code)
+str(country_data)
+```
+
+## Cleaning
+
+::: {.callout-caution collapse="false" title="Task"}
+Check for missing observations, duplicate country identifiers, and nonnumeric indicators.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+quality_checks <- data.frame(
+  countries = nrow(country_data),
+  indicators = length(indicator_names),
+  missing = sum(is.na(country_data)),
+  duplicate_ids = sum(duplicated(country_data$country_code)),
+  nonnumeric_indicators = sum(!vapply(country_data[indicator_names], is.numeric, logical(1)))
+)
+stopifnot(quality_checks$missing == 0, quality_checks$duplicate_ids == 0,
+          quality_checks$nonnumeric_indicators == 0,
+          all(is.finite(as.matrix(country_data[indicator_names]))))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+quality_checks
+```
+:::
+
+## Engineering
+
+::: {.callout-caution collapse="false" title="Task"}
+Standardize the data using `scale()`. For this descriptive PCA analysis, use all countries. We will later fit a separate standardizer on training countries only.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+original <- as.matrix(country_data[, indicator_names, drop = FALSE])
+country_data_standardized <- as.data.frame(scale(original)) %>%
+  mutate(country_code = country_data$country_code, .before = 1)
+X_full_standardized <- as.matrix(country_data_standardized[, indicator_names, drop = FALSE])
+```
+
+::: {.callout-caution collapse="false" title="Task"}
+Convert raw and standardized indicators to long format. Compute their means and standard deviations.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+raw_summary <- country_data %>%
+  pivot_longer(all_of(indicator_names), names_to = "variable", values_to = "value") %>%
+  group_by(variable) %>%
+  summarise(mean = mean(value), sd = sd(value), .groups = "drop")
+standardized_summary <- country_data_standardized %>%
+  pivot_longer(all_of(indicator_names), names_to = "variable", values_to = "value") %>%
+  group_by(variable) %>%
+  summarise(mean = mean(value), sd = sd(value), .groups = "drop")
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+raw_summary
+standardized_summary
+```
+:::
+
+::: {.callout-tip title="Question"}
+Why standardize the variables before comparing their contributions to the principal components?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The standardization creates indicators with mean approximately zero and standard deviation one. A one-standard-deviation movement then has the same numerical scale regardless of whether the original indicator was measured in basis points, percentages, or ratios. Without standardization, a variable such as the sovereign risk spread can dominate covariance-based PCA because of its numerical scale, not because it necessarily carries more economic information.
+:::
+
+## EDA
+
+### Compute correlation matrix
+
+::: {.callout-caution collapse="false" title="Task"}
+Compute the correlation matrix among the 11 indicators.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+correlation_matrix <- cor(X_full_standardized)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+round(correlation_matrix, 2)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Which indicators are candidates for consolidation? Could correlations conceal nonlinear relationships?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+Indicators within the growth/momentum, valuation, and risk groups should be candidates for consolidation. However, Pearson correlation measures *linear* association. Two variables can have an economically meaningful curved relationship even if their correlation does not describe that curvature. Scatterplots help reveal this limitation.
+:::
+
+### Visualize the correlation matrix
+
+::: {.callout-caution collapse="false" title="Task"}
+Create a heatmap of the correlations.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+melted_corr <- as.data.frame(as.table(correlation_matrix))
+names(melted_corr) <- c("Var1", "Var2", "value")
+correlation_heatmap <- ggplot(melted_corr, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limits = c(-1, 1), name = "Correlation") +
+  scale_y_discrete(limits = rev(colnames(correlation_matrix))) +
+  labs(title = "Correlation Matrix Heatmap", x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+correlation_heatmap
+```
+:::
+
+### Visualize pairwise plots
+
+::: {.callout-caution collapse="false" title="Task"}
+Generate pairwise plots for all indicators. Pay particular attention to curvature in the within-group relationships.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+country_pairs <- GGally::ggpairs(country_data_standardized %>%
+                                  select(all_of(indicator_names)))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 12
+country_pairs
+```
+:::
+
+::: {.callout-tip title="Question"}
+What patterns do the pairwise plots suggest that a correlation matrix alone might miss?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The indicators still move in recognizable economic groups, but some relationships are curved or asymmetric. For example, a risk spread may rise much faster at high risk than at low risk. PCA can exploit the *linear* covariance structure in these data, but it cannot follow every bend in a nonlinear relation when reconstructing observations from only a few components.
+:::
+
+# PCA
+
+::: {.callout-tip title="Question"}
+What is our analytical goal? How might PCA help?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- PCA transforms the original indicators into orthogonal directions that successively maximize sample variance.
+- The eigenvalue problem is $\Sigma v_j=\lambda_jv_j$. Eigenvalues $\lambda_j$ measure component variances, and eigenvectors $v_j$ provide the corresponding loadings.
+- A standardized country vector $z_i$ receives score $s_{ij}=z_i'v_j$ (after any centering used in fitting).
+- Retaining only a few scores describes countries more compactly, at the cost of imperfect reconstruction of their original indicators.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Run PCA on the standardized country indicators using `prcomp()` and summarize it.
+:::
+
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+pca_z <- prcomp(X_full_standardized, center = TRUE, scale. = FALSE)
+summary(pca_z)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+summary(pca_z)
+```
+:::
+
+
+## Choosing the number of components
+
+::: {.callout-caution collapse="false" title="Task"}
+Produce a scree plot, the proportion of variance explained, and the cumulative variance explained.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+eigenvalues <- pca_z$sdev^2
+variance_share <- eigenvalues / sum(eigenvalues)
+variance_table <- data.frame(
+  component = paste0("PC", seq_along(eigenvalues)),
+  eigenvalue = eigenvalues,
+  variance_share = variance_share,
+  cumulative_share = cumsum(variance_share)
+)
+scree_plot <- ggplot(variance_table, aes(seq_along(eigenvalue), eigenvalue)) +
+  geom_line() + geom_point() +
+  scale_x_continuous(breaks = seq_len(nrow(variance_table))) +
+  labs(title = "Scree Plot", 
+  x = "Principal component (j)", 
+  y = expression("Variance of PC Scores (" * lambda[j] * ")")) +
+  theme_minimal()
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+scree_plot
+variance_table
+```
+:::
+
+::: {.callout-tip title="Question"}
+How many components are needed to explain at least 60%, 75%, and 90% of the variance? How does the nonlinear dataset differ from the original linear simulation?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+```{r}
+#| echo: false
+thresholds <- c(0.60, 0.75, 0.90)
+data.frame(
+  target = thresholds,
+  n_components = vapply(thresholds, function(t) {
+    which(variance_table$cumulative_share >= t)[1]
+  }, integer(1))
+)
+cat(sprintf("Cumulative variance explained by 3 PCs: %.1f%%\n",
+            100 * variance_table$cumulative_share[3]))
+```
+
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Apply the Kaiser rule 
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+kaiser <- transform(variance_table, retain = eigenvalue > 1)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+kaiser
+```
+:::
+
+::: {.callout-tip title="Question"}
+Interpret the results.  Is the Kaiser rule a proof of the optimal number of dimensions?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+Kaiser Rule: retain PCs with eigenvalue (variance of PC Scores) greater than one. Here, we keep 3 PCs. 
+
+Caution: The Kaiser rule is a heuristic for standardized PCA, not a statistical guarantee. Interpretation, reconstruction loss, and late held-out performance can support a more informed choice. .
+:::
+
+## Interpreting PCA
+
+### Loadings
+
+::: {.callout-caution collapse="false" title="Task"}
+Display and plot the loadings for PC1, PC2, and PC3.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+pc_loadings <- as.data.frame(pca_z$rotation[, 1:3, drop = FALSE]) %>%
+  mutate(variable = indicator_names, .before = 1) %>%
+  pivot_longer(-variable, names_to = "PC", values_to = "loading")
+loading_plot <- ggplot(pc_loadings,
+                       aes(reorder(variable, abs(loading)), loading)) +
+  geom_col() + facet_wrap(~PC, ncol = 1, scales = "free_x") +
+  coord_flip() +
+  labs(title = "PCA loadings for the first three components",
+       x = NULL, y = "Loading") + theme_minimal()
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+pc_loadings
+loading_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+What do the loading magnitudes and signs mean? How would you characterize each of the first three PCs?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+
+```{r}
+#| echo: false
+lapply(1:3, function(k) {
+  v <- sort(pca_z$rotation[, k], decreasing = FALSE)
+  data.frame(PC = paste0("PC", k),
+             variable = names(sort(abs(v), decreasing = TRUE))[1:5],
+             loading = v[names(sort(abs(v), decreasing = TRUE))[1:5]],
+             row.names = NULL)
+})
+```
+With prcomp(), the "rotation" element is the matrix of eigenvectors (i.e. loadings; v).  Each column corresponds to a principal component.  Rows are the original variables.  
+
+Here, we list the top 5 loadings as ranked by their absolute loading.  
+
+The loading for an indicator is the weight used to construct a PC. Larger absolute loadings indicate greater contributions to that component. Indicators with the same loading sign move in the same direction along that PC; indicators with opposite signs move in opposite directions. The overall sign of a PC is arbitrary.
+
+PC1: Economic Stress 
+
+- Positive loadings: Inflation (~0.41), equity volatility, FX volatility, and sovereign risk spreads (~0.36 each).
+- Negative loadings: Equity momentum (~−0.35).
+- Interpretation: PC1 distinguishes countries with high economic and financial risk from those exhibiting stronger equity momentum. A country with a high PC1 score tends to have greater inflation, volatility, and sovereign risk, coupled with weaker momentum. A low score suggests the opposite.
+
+PC2: Growth and Market Intensity
+
+- Largest positive loadings: GDP growth, industrial production growth, and earnings growth (~0.41–0.43), followed by equity momentum (~0.32).
+- Other positive loadings: Equity volatility.
+- Interpretation: PC2 primarily captures the strength of economic growth and equity momentum, but higher scores are also associated with elevated measures of financial risk. Unlike PC1, which appears focused on risk, PC2 assigns positive weights to both. It therefore represents a broader dimension combining economic activity and market risk, rather than a pure growth factor.
+
+PC3: Equity Valuation
+
+- Large negative loadings: Forward P/E (~−0.52) and price-to-book (~−0.51).
+- Large positive loading: Dividend yield (~0.53).
+- Interpretation: PC3 primarily distinguishes relatively inexpensive equity markets from expensive ones. Countries with high PC3 scores tend to have lower valuation multiples and higher dividend yields. Countries with low scores tend to have higher valuation multiples and lower dividend yields. The modest positive risk loadings also suggest that high-PC3 countries exhibit somewhat greater financial risk.
+
+Although the data were generated from three underlying economic factors (Growth, Valuation, and Risk), PCA does not necessarily recover those factors individually. PCA identifies orthogonal linear combinations that maximize explained variance. Consequently, PC1 and PC2 both mix growth and risk indicators, while PC3 isolates the valuation dimension more clearly.
+
+
+:::
+
+## Scores
+
+::: {.callout-caution collapse="false" title="Task"}
+Extract CTRY001's PC1 score. Recompute it directly from the indicator values and the loading vector.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+row_001 <- match("CTRY001", country_data$country_code)
+score_from_prcomp <- pca_z$x[row_001, 1]
+score_by_hand <- sum((X_full_standardized[row_001, ] - pca_z$center) * pca_z$rotation[, 1])
+stopifnot(isTRUE(all.equal(unname(score_from_prcomp), unname(score_by_hand),
+                           tolerance = 1e-8)))
+```
+
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+
+score_from_prcomp
+score_by_hand
+```
+:::
+
+::: {.callout-tip title="Question"}
+What does the score mean in our case? 
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+
+Recall that we interpreted PC1 as Economic Stress:
+
+- Positive PC1 loadings: Inflation, equity volatility, FX volatility, and sovereign risk spreads.
+- Negative PC1 loadings: Equity momentum.
+
+So, the negative PC1 score suggests CTRY001 exhibits lower financial risk than the average country and/or stronger equity momentum than the average country.  
+
+To interpret the magnitude we can divide the score by the standard deviation.  
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+
+score_from_prcomp / pca_z$sdev[1]
+
+```
+
+A standardized PC1 score of −0.52 means that CTRY001 is 0.52 standard deviations below the average country along the first principal component.
+:::
+
+
+## Reconstruction
+
+The objective is to retain only a few dimensions and still reconstruct the original standardized observations as accurately as possible.
+
+::: {.callout-caution collapse="false" title="Task"}
+Write a reconstruction function. Display the reconstruction using the first 3 PCs. 
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+pca_reconstruct <- function(pca, z, k) {
+  scores <- predict(pca, newdata = z)[, seq_len(k), drop = FALSE]
+  loadings <- pca$rotation[, seq_len(k), drop = FALSE]
+  reconstruction <- scores %*% t(loadings)
+  sweep(reconstruction, 2, pca$center, "+")
+}
+mse <- function(x, x_hat) mean((as.matrix(x) - as.matrix(x_hat))^2)
+pca_full_recons <- lapply(1:3, function(k) pca_reconstruct(pca_z, X_full_standardized, k))
+pca_full_errors <- data.frame(
+  n_components = 1:3,
+  reconstruction_mse = vapply(pca_full_recons, function(r) mse(X_full_standardized, r), numeric(1))
+)
+```
+
+
+
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+
+head(pca_full_recons[[3]])
+
+```
+:::
+
+::: {.callout-tip title="Question"}
+Interpret the value in the first row, first column.  
+:::
+
+
+::: {.callout-note collapse="true" title="Answer"}
+This is the reconstruction for the first country's GDP Growth Rate.  
+
+Using only three principal components, PCA estimates that CTRY001's GDP growth rate is 0.4444 standard deviations above the average country.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Compute standardized in-sample reconstruction errors for 1, 2, and 3 PCs.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+
+
+pca_full_errors <- data.frame(
+  n_components = 1:3,
+  reconstruction_mse = vapply(pca_full_recons, function(r) mse(X_full_standardized, r), numeric(1))
+)
+```
+
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+
+pca_full_errors
+
+```
+:::
+
+
+
+
+## Investment interpretation
+
+::: {.callout-caution collapse="false" title="Task"}
+Identify which of the first three PCs is most associated with Growth/Momentum and which is most associated with Risk. Orient the scores so larger values indicate stronger growth and higher risk, respectively. Rank countries on each dimension.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+growth_variables <- c("GDP_Growth_Rate", "Industrial_Production_Growth",
+                      "Earnings_Growth_Rate", "Equity_Momentum_12M")
+risk_variables <- c("Equity_Volatility", "FX_Volatility", "Inflation_Rate",
+                    "Sovereign_Risk_Spread_Bps")
+category_pc <- function(vars) {
+  which.max(colSums(abs(pca_z$rotation[vars, 1:3, drop = FALSE])))
+}
+growth_pc <- category_pc(growth_variables)
+risk_pc <- category_pc(risk_variables)
+# These may coincide when economic dimensions overlap. They are only screening proxies.
+growth_sign <- sign(sum(pca_z$rotation[growth_variables, growth_pc]))
+risk_sign <- sign(sum(pca_z$rotation[risk_variables, risk_pc]))
+if (growth_sign == 0) growth_sign <- 1
+if (risk_sign == 0) risk_sign <- 1
+country_rankings <- data.frame(
+  country_code = country_data$country_code,
+  growth_score = growth_sign * pca_z$x[, growth_pc],
+  risk_score = risk_sign * pca_z$x[, risk_pc]
+)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+cat("Growth-associated PC:", growth_pc, "| Risk-associated PC:", risk_pc, "\n")
+head(arrange(country_rankings, desc(growth_score)), 10)
+head(arrange(country_rankings, desc(risk_score)), 10)
+```
+:::
+
+::: {.callout-tip title="Question"}
+How might the investment team use these scores without treating them as trading recommendations?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The rankings summarize the relative positions of countries along estimated economic dimensions and can help identify markets for further investigation, diversification analysis, or monitoring. They are not forecasts of ETF returns and do not establish which country is undervalued. The ranking orientation is determined from observed indicator loadings, and the underlying economic categories may overlap.
+
+Notice that CTRY022 is the most extreme as ranked by growth as well as by risk.  This country deserves further investigation.  
+:::
+
+
+# Autoencoder
+
+## Dimension reduction
+
+PCA compresses the indicators through linear projections. An autoencoder learns a mapping from the indicators into a lower-dimensional representation and then a mapping back to the original indicators.
+
+$$
+\underbrace{z_i=f_\theta(x_i)}_{\text{encoder}},\qquad
+\underbrace{\widehat{x}_i=g_\phi(z_i)}_{\text{decoder}}.
+$$
+
+The network chooses parameters to minimize average reconstruction error:
+
+$$
+\mathcal L(\theta,\phi)=\frac{1}{Np}\sum_{i=1}^{N}\sum_{j=1}^{p}
+\left(x_{ij}-\widehat x_{ij}\right)^2,
+$$
+
+where the $x_{ij}$ are standardized values of indicator $j$ for country $i$. We will compare bottlenecks with $k=1,2,3$ coordinates. A nonlinear network can potentially represent a curved structure that PCA cannot capture with only $k$ linear components.
+
+::: {.callout-tip title="Question"}
+How is an autoencoder related to PCA? Does a nonlinear autoencoder necessarily improve reconstruction accuracy on new countries?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+Both compress observations while trying to preserve information. A linear autoencoder optimized to its global squared-error minimum can recover the same principal subspace as PCA (its coordinates need not equal PC scores). Nonlinear layers make more flexible reconstructions possible but introduce additional parameters, optimization uncertainty, and overfitting risk. There is no guarantee of lower held-out error.
+:::
+
+## Set training, validation, and test countries
+
+::: {.callout-caution collapse="false" title="Task"}
+Create a 60% training / 20% validation / 20% test split used by the simulation. 
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+
+set.seed(2027)
+n_country <- nrow(country_data)
+shuffled <- sample.int(n_country)
+n_train <- floor(0.60 * n_country)
+n_val <- floor(0.20 * n_country)
+split_label <- rep("test", n_country)
+split_label[shuffled[seq_len(n_train)]] <- "train"
+split_label[shuffled[n_train + seq_len(n_val)]] <- "validation"
+split_data <- data.frame(country_code = country_data$country_code,
+                         split = split_label)
+idx <- list(train = which(split_label == "train"),
+            validation = which(split_label == "validation"),
+            test = which(split_label == "test"))
+# Unusual countries flagged in the PCA rankings; examined later in the reconstruction and sensitivity sections
+outlier_codes <- c("CTRY022", "CTRY042")
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+table(split_data$split)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Why do we need validation and test countries, rather than relying entirely on the training reconstruction loss?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+Training data determine the model parameters. 
+
+Validation observations guide early stopping and any prespecified, limited hyperparameter adjustments. 
+
+The test countries provide an independent check of reconstruction quality, after all model choices are finalized. A flexible autoencoder can achieve low training error without reconstructing unseen countries well.
+:::
+
+## Standardize using training countries only
+
+::: {.callout-caution collapse="false" title="Task"}
+Estimate each feature's mean and standard deviation on the training countries. Then standardize the validation and test samples using these same parameters.
+:::
+
+The matrix `X_standardized` contains the 11 standardized indicators for each country. In our mathematical notation, each row corresponds to $x_i \in \mathbb{R}^{11}$, the input to the autoencoder.
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+train_center <- colMeans(original[idx$train, , drop = FALSE])
+train_scale <- apply(original[idx$train, , drop = FALSE], 2, sd)
+stopifnot(all(is.finite(train_scale)), all(train_scale > 0))
+standardize_train <- function(x) {
+  sweep(sweep(as.matrix(x), 2, train_center, "-"), 2, train_scale, "/")
+}
+X_standardized <- standardize_train(original)
+X_train_standardized <- X_standardized[idx$train, , drop = FALSE]
+X_val_standardized <- X_standardized[idx$validation, , drop = FALSE]
+X_test_standardized <- X_standardized[idx$test, , drop = FALSE]
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+rbind(
+  train_mean = colMeans(X_train_standardized),
+  train_sd = apply(X_train_standardized, 2, sd),
+  validation_mean = colMeans(X_val_standardized),
+  test_mean = colMeans(X_test_standardized)
+)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Why do the validation and test variables generally not have exactly zero mean and unit standard deviation?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The centering and scaling parameters were estimated from *training countries only*. Applying them to new countries does not force those other samples to have the same empirical means and standard deviations. Estimating the scaler from all 100 countries before splitting would leak information from the evaluation samples into training.
+
+The training means and standard deviations are part of the fitted model, like the network weights. The network learned its weights on inputs expressed in training units, so validation and test countries must be passed through the same transformation to evaluate that model. Re-standardizing them with their own moments would change the meaning of the inputs and would hide genuine differences between the samples.
+
+:::
+
+## Autoencoder architecture
+
+::: {.callout-caution collapse="false" title="Task"}
+Define a symmetric autoencoder in `torch` with layer sizes `input_dim` $\rightarrow$ `hidden_units` $\rightarrow$ `latent_dim` $\rightarrow$ `hidden_units` $\rightarrow$ `input_dim`.
+
+Apply ReLU after the first layer of the encoder and the first layer of the decoder. Do not apply activation functions to the bottleneck or output layers.
+
+Pass the layer sizes as arguments so the bottleneck dimension $k$ (`latent_dim`) is configurable.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+# CPU avoids device-specific portability issues for a classroom dataset.
+device <- torch_device("cpu")
+
+autoencoder <- nn_module(
+  "CountryAutoencoder",
+
+  initialize = function(input_dim, hidden_units, latent_dim) {
+    # Encoder
+    self$enc1 <- nn_linear(input_dim, hidden_units)   # Encoder hidden layer
+    self$enc2 <- nn_linear(hidden_units, latent_dim)  # Bottleneck (k dimensions)
+
+    # Decoder
+    self$dec1 <- nn_linear(latent_dim, hidden_units)  # Decoder hidden layer
+    self$dec2 <- nn_linear(hidden_units, input_dim)   # Output layer
+  },
+
+  encode = function(x) {
+    # Input -> Hidden Layer (ReLU) -> Bottleneck (linear)
+    self$enc2(nnf_relu(self$enc1(x)))
+  },
+
+  decode = function(z) {
+    # Bottleneck -> Hidden layer (ReLU) -> Output (linear)
+    self$dec2(nnf_relu(self$dec1(z)))
+  },
+
+  forward = function(x) {
+    # Full autoencoder: input -> latent representation -> reconstruction
+    self$decode(self$encode(x))
+  }
+)
+```
+
+## Training the autoencoder
+
+::: {.callout-caution collapse="false" title="Task"}
+Implement training with Adam, full-batch updates, validation monitoring, early stopping, and restoration of the best validation parameters. Fit *separate* autoencoders for $k=1,2,3$.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+as_cpu_matrix <- function(tensor, ncol_expected) {
+  array_result <- as.array(tensor$to(device = torch_device("cpu")))
+  matrix(array_result, ncol = ncol_expected)
+}
+
+torch_predict <- function(model, x, latent = FALSE, n_dimensions = 11L) {
+  model$eval()
+  with_no_grad({
+    tensor <- torch_tensor(as.matrix(x), dtype = torch_float(), device = device)
+    predicted <- if (latent) model$encode(tensor) else model(tensor)
+    as_cpu_matrix(predicted, n_dimensions)
+  })
+}
+
+fit_autoencoder <- function(x_train, x_val, latent_dim = 3L, seed = 42L,
+                            hidden_units = 5L, lr = 0.003,
+                            epochs = 1800L, patience = 120L,
+                            min_delta = 1e-6) {
+  set.seed(seed)
+  torch_manual_seed(seed)
+  input_dim <- ncol(x_train)
+  model <- autoencoder(input_dim = input_dim,
+                       hidden_units = hidden_units,
+                       latent_dim = latent_dim)$to(device = device)
+  optimizer <- optim_adam(model$parameters, lr = lr)
+  X_train_tensor <- torch_tensor(as.matrix(x_train), dtype = torch_float(),
+                                 device = device)
+  X_val_tensor <- torch_tensor(as.matrix(x_val), dtype = torch_float(),
+                               device = device)
+  best_val <- Inf
+  best_epoch <- NA_integer_
+  wait <- 0L
+  best_state <- NULL
+  history <- vector("list", epochs)
+
+  for (ep in seq_len(epochs)) {
+    model$train()
+    optimizer$zero_grad()
+    x_hat <- model(X_train_tensor)
+    loss <- nnf_mse_loss(x_hat, X_train_tensor)
+    loss$backward()
+    optimizer$step()
+
+    # Evaluate BOTH losses with the same post-update parameters.
+    model$eval()
+    losses <- with_no_grad({
+      list(train = nnf_mse_loss(model(X_train_tensor), X_train_tensor)$item(),
+           validation = nnf_mse_loss(model(X_val_tensor), X_val_tensor)$item())
+    })
+    history[[ep]] <- data.frame(epoch = ep, train_loss = losses$train,
+                                val_loss = losses$validation)
+    if (losses$validation < best_val - min_delta) {
+      best_val <- losses$validation
+      best_epoch <- ep
+      wait <- 0L
+      # clone() is crucial: retaining a live state_dict reference may allow
+      # later optimizer steps to mutate the stored "best" weights.
+      best_state <- lapply(model$state_dict(), function(t) t$clone())
+    } else {
+      wait <- wait + 1L
+    }
+    if (wait >= patience) break
+  }
+  model$load_state_dict(best_state)
+  list(model = model,
+       history = dplyr::bind_rows(history[seq_len(ep)]),
+       best_epoch = best_epoch,
+       best_validation = best_val,
+       latent_dim = latent_dim,
+       seed = seed)
+}
+
+training_settings <- list(hidden_units = 5L, lr = 0.003,
+                          epochs = 1800L, patience = 120L)
+ae_fits <- lapply(1:3, function(k) {
+  fit_autoencoder(X_train_standardized, X_val_standardized, latent_dim = k, seed = 42L,
+                  hidden_units = training_settings$hidden_units,
+                  lr = training_settings$lr,
+                  epochs = training_settings$epochs,
+                  patience = training_settings$patience)
+})
+names(ae_fits) <- paste0("AE", 1:3)
+training_summary <- data.frame(
+  dimensions = 1:3,
+  epochs_trained = vapply(ae_fits, function(f) nrow(f$history), integer(1)),
+  best_epoch = vapply(ae_fits, `[[`, integer(1), "best_epoch"),
+  best_validation_mse = vapply(ae_fits, `[[`, numeric(1), "best_validation")
+)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+training_summary
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Plot training and validation loss curves for all three bottleneck sizes.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+training_curves <- dplyr::bind_rows(lapply(seq_along(ae_fits), function(i) {
+  dplyr::mutate(ae_fits[[i]]$history, dimensions = as.factor(i))
+})) %>%
+  pivot_longer(c(train_loss, val_loss), names_to = "sample", values_to = "MSE")
+training_plot <- ggplot(training_curves, aes(epoch, MSE, color = sample)) +
+  geom_line() + facet_wrap(~dimensions) +
+  labs(title = "Autoencoder Training Curves", x = "Epoch", y = "MSE") +
+  theme_minimal()
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+training_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+Interpret the loss curves. 
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+Several observations: 
+
+- Rapid initial learning.  All 3 models exhibit steep declines in training and validation MSE during early epochs. 
+- Convergence.  The curves eventually flatten, suggesting additional training produces relatively small improvements in reconstruction accuracy. 
+- Little evidence of overfitting.  Training and validation errors remain close together.  By contast, if the validation error began increasing while training error continued declining, that would indicate overfitting. 
+- More dimenstions improve reconstruction, as indicate by the lower loss curves for models 2 and 3. 
+
+:::
+
+## Autoencoder reconstruction
+
+::: {.callout-caution collapse="false" title="Task"}
+For each autoencoder, reconstruct the training, validation, and test countries. Compute reconstruction MSE on the common standardized indicator scale.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+sample_matrices <- list(Train = X_train_standardized, Validation = X_val_standardized, Test = X_test_standardized)
+ae_reconstruction <- function(model, z) {
+  torch_predict(model, z, latent = FALSE, n_dimensions = ncol(z))
+}
+ae_errors <- dplyr::bind_rows(lapply(1:3, function(k) {
+  data.frame(
+    Method = "Autoencoder", Dimensions = k,
+    Train_MSE = mse(X_train_standardized, ae_reconstruction(ae_fits[[k]]$model, X_train_standardized)),
+    Validation_MSE = mse(X_val_standardized, ae_reconstruction(ae_fits[[k]]$model, X_val_standardized)),
+    Test_MSE = mse(X_test_standardized, ae_reconstruction(ae_fits[[k]]$model, X_test_standardized))
+  )
+}))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ae_errors
+head(ae_reconstruction(ae_fits[[3]]$model, X_test_standardized))
+```
+:::
+
+::: {.callout-tip title="Question"}
+Interpret the value in the first row, first column of the reconstruction matrix. 
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The first country's (row) standardixed GDP growth rate (column) is .441743 standard deviations below the mean.  
+
+Recall that for PCA this was roughly the same magnitude above the mean.  
+
+Moreover, note the slight difference in data used.  The PCA used the full sample while AE used the training sample.  
+:::
+
+
+
+::: {.callout-tip title="Question"}
+How can three latent features yield reconstructed values for all 11 observed indicators?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The encoder maps the 11 indicators to three features. The decoder learns a function that maps those three features back to 11 outputs. Reconstruction is typically imperfect: the network must discard some information to fit every observation into a lower-dimensional bottleneck.
+:::
+
+# Comparing PCA and Autoencoders
+
+## Training-fitted PCA benchmark
+
+The earlier PCA was a full-sample descriptive fit. It cannot serve as a fair held-out benchmark because its loadings were estimated using the test countries. We now refit PCA on exactly the same standardized training countries supplied to the autoencoder.
+
+::: {.callout-caution collapse="false" title="Task"}
+Fit PCA to training observations only. Reconstruct training, validation, and test countries using 1, 2, and 3 principal components.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+pca_train <- prcomp(X_train_standardized, center = TRUE, scale. = FALSE)
+pca_errors <- dplyr::bind_rows(lapply(1:3, function(k) {
+  data.frame(
+    Method = "PCA", Dimensions = k,
+    Train_MSE = mse(X_train_standardized, pca_reconstruct(pca_train, X_train_standardized, k)),
+    Validation_MSE = mse(X_val_standardized, pca_reconstruct(pca_train, X_val_standardized, k)),
+    Test_MSE = mse(X_test_standardized, pca_reconstruct(pca_train, X_test_standardized, k))
+  )
+}))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+pca_errors
+```
+:::
+
+::: {.callout-tip title="Question"}
+Why is this PCA model different from the one we used earlier? Why must test-country scores use *training* loadings?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The earlier PCA used every country to learn its center and axes. Here the scaler, PCA center, and loading directions are estimated only on training countries. For each new country, we project its training-standardized features onto those fixed directions, then reconstruct from those scores. Re-estimating PCA on test countries would contaminate the evaluation of generalization performance.
+:::
+
+## Compare reconstruction error
+
+::: {.callout-caution collapse="false" title="Task"}
+Combine PCA and autoencoder results into a table. Plot reconstruction error against the number of retained dimensions, highlighting test error.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+comparison <- bind_rows(pca_errors, ae_errors) %>%
+  arrange(Dimensions, Method)
+comparison_long <- comparison %>%
+  pivot_longer(c(Train_MSE, Validation_MSE, Test_MSE),
+               names_to = "Sample", values_to = "MSE")
+comparison_plot <- ggplot(comparison_long,
+                          aes(Dimensions, MSE, color = Method, group = Method)) +
+  geom_line() + geom_point(size = 2) +
+  facet_wrap(~Sample, scales = "free_y") +
+  scale_x_continuous(breaks = 1:3) +
+  labs(title = "PCA versus Autoencoder: Reconstruction MSE",
+       x = "Retained dimensions", y = "Mean squared error") +
+  theme_minimal()
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+comparison
+comparison_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+Does the autoencoder outperform PCA on the held-out test countries? Does error consistently decline with additional dimensions?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+```{r}
+#| echo: false
+result_summary <- comparison %>%
+  select(Method, Dimensions, Test_MSE) %>%
+  tidyr::pivot_wider(names_from = Method, values_from = Test_MSE) %>%
+  mutate(AE_minus_PCA = Autoencoder - PCA,
+         lower_test_error = ifelse(AE_minus_PCA < 0, "Autoencoder", "PCA"))
+result_summary
+```
+For each $k$, the lower test MSE indicates better held-out reconstruction on this particular split. Unlike PCA's *training* reconstruction error, neither method's test error is guaranteed to decline monotonically as $k$ increases. The autoencoders were separately optimized, and only about 20 countries are in the test set. Small test differences should therefore be interpreted cautiously; do not tune the simulation or network to force an autoencoder win.
+:::
+
+## Reconstruction by economic indicator
+
+::: {.callout-caution collapse="false" title="Task"}
+Using three-dimensional representations, compute test reconstruction MSE separately for each of the 11 indicators.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+pca_3_test <- pca_reconstruct(pca_train, X_test_standardized, 3)
+ae_3_test <- ae_reconstruction(ae_fits[[3]]$model, X_test_standardized)
+indicator_errors <- bind_rows(
+  data.frame(variable = indicator_names, Method = "PCA",
+             Test_MSE = colMeans((X_test_standardized - pca_3_test)^2)),
+  data.frame(variable = indicator_names, Method = "Autoencoder",
+             Test_MSE = colMeans((X_test_standardized - ae_3_test)^2))
+)
+indicator_plot <- ggplot(indicator_errors,
+                         aes(reorder(variable, Test_MSE), Test_MSE, fill = Method)) +
+  geom_col(position = "dodge") + coord_flip() +
+  labs(title = "Three Dimensions: Test Error by Indicator",
+       x = NULL, y = "Test MSE (training-standardized units)") +
+  theme_minimal()
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+indicator_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+Explain the meaning of the reconstruction error for a given variable; you may use GDP Growth Rate to frame your answer. 
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+Recall that the autoencoder uses the encoder $f_\theta$ to compress each country's 11 standardized indicators, $x_i \in \mathbb{R}^{11}$, into a three-dimensional representation $z_i=f_\theta(x_i)$. The decoder $g_\phi$ then uses these three features to reconstruct all 11 indicators:
+
+$$
+\hat{x}_i=g_\phi(z_i)=g_\phi(f_\theta(x_i))
+$$
+
+Since $\hat{x}_i \in \mathbb{R}^{11}$, each element corresponds to a reconstructed indicator. For example, the reconstructed standardized GDP growth rate for country $i$ is:
+
+$$
+\widehat{\text{GDP Growth}}_i
+=
+[g_\phi(z_i)]_{\text{GDP Growth}}
+$$
+
+where the subscript outside the brackets selects the GDP growth element of the decoder's 11-dimensional output.
+
+Suppose a country's actual standardized GDP growth rate is 0.60, while the reconstructed value is 0.45. The reconstruction error is $0.60-0.45=0.15$, and the squared error is $0.0225$. This measures how much information about that country's GDP growth was lost when the original 11 indicators were compressed into three dimensions and then reconstructed. The **Test MSE for GDP growth** averages these squared errors across all countries in the test sample. A lower MSE indicates that the compressed representation preserves more information about GDP growth.
+
+The Test MSE for GDP_Growth_Rate averages these squared errors across all countries in the test sample. A lower MSE indicates that the compressed representation preserves more information about GDP growth. PCA follows the same general procedure, but reconstructs the indicators using linear combinations of principal component scores and loadings, whereas the autoencoder uses a learned nonlinear decoder. Comparing their test MSEs reveals which method reconstructs GDP growth more accurately for previously unseen countries.
+
+:::
+
+
+
+::: {.callout-tip title="Question"}
+For which indicators, if any, is the nonlinear autoencoder especially helpful relative to the PCA? Why might some indicators be reconstructed worse?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+```{r}
+#| echo: false
+indicator_gains <- indicator_errors %>%
+  pivot_wider(names_from = Method, values_from = Test_MSE) %>%
+  mutate(Improvement = PCA - Autoencoder) %>%
+  arrange(desc(Improvement)) %>%
+  transmute(
+    Indicator = variable,
+    `PCA Test MSE` = round(PCA, 4),
+    `Autoencoder Test MSE` = round(Autoencoder, 4),
+    `Improvement (PCA - AE)` = round(Improvement, 4)
+  )
+
+knitr::kable(
+  indicator_gains,
+  caption = "Test Reconstruction Error by Indicator (3 Dimensions)",
+  align = c("l", "r", "r", "r")
+)
+```
+Positive improvement means the autoencoder produced lower test MSE. 
+
+Earnings growth benefited from the nonlinear autoencoder, suggesting that its relationship with the underlying economic factors may not be adequately captured by PCA's linear representation. This is consistent with our simulated data, which deliberately incorporate nonlinear relationships into earnings growth. However, superior reconstruction accuracy alone does not establish nonlinearity, particularly given our small sample.
+
+:::
+
+## Country-by-country reconstruction
+
+::: {.callout-caution collapse="false" title="Task"}
+Plot actual and reconstructed standardized indicators for two test-set countries. Then inspect CTRY022 and CTRY042 separately and label which split each belongs to.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+pca_3_all <- pca_reconstruct(pca_train, X_standardized, 3)
+ae_3_all <- ae_reconstruction(ae_fits[[3]]$model, X_standardized)
+rownames(pca_3_all) <- rownames(ae_3_all) <- country_data$country_code
+recon_long_for <- function(country_codes) {
+  rows <- match(country_codes, country_data$country_code)
+  stopifnot(!anyNA(rows))
+  data.frame(
+    country_code = rep(country_codes, each = length(indicator_names) * 3),
+    variable = rep(rep(indicator_names, each = 3), length(rows)),
+    Method = rep(c("Observed", "PCA", "Autoencoder"), length(indicator_names) * length(rows)),
+    value = unlist(lapply(rows, function(i) {
+      as.vector(rbind(X_standardized[i, ], pca_3_all[i, ], ae_3_all[i, ]))
+    }), use.names = FALSE),
+    stringsAsFactors = FALSE
+  )
+}
+selected_test <- country_data$country_code[head(idx$test, 2)]
+selected_outliers <- intersect(outlier_codes, country_data$country_code)
+selected_codes <- unique(c(selected_test, selected_outliers))
+recon_countries <- recon_long_for(selected_codes) %>%
+  left_join(split_data, by = "country_code") %>%
+  mutate(country_label = paste0(country_code, " (", split, ")"))
+country_recon_plot <- ggplot(recon_countries,
+                            aes(variable, value, color = Method, group = Method)) +
+  geom_point() + geom_line() +
+  facet_wrap(~country_label, ncol = 1) +
+  labs(title = "Observed and Reconstructed Indicators: Three Dimensions",
+       x = NULL, y = "Training-standardized indicator") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = 55, hjust = 1))
+country_mse <- data.frame(
+  country_code = selected_codes,
+  split = split_label[match(selected_codes, country_data$country_code)],
+  PCA_MSE = vapply(selected_codes, function(code) {
+    i <- match(code, country_data$country_code)
+    mean((X_standardized[i, ] - pca_3_all[i, ])^2)
+  }, numeric(1)),
+  AE_MSE = vapply(selected_codes, function(code) {
+    i <- match(code, country_data$country_code)
+    mean((X_standardized[i, ] - ae_3_all[i, ])^2)
+  }, numeric(1))
+)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 11
+#| fig-height: 12
+country_recon_plot
+```
+:::
+
+
+::: {.callout-tip title="Question"}
+Interpret the reconstruction plots. What do they reveal about reconstruction accuracy across countries and indicators? How does the autoencoder compare with PCA?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+
+- **Training versus test observations:** Both methods reconstruct the training countries (CTRY022 and CTRY042) quite accurately, despite their unusual characteristics. The two test countries also exhibit relatively close reconstructions. However, we generally expect reconstruction errors to be lower for training observations because those countries were used to fit the models. We cannot establish that pattern from these four countries alone; the aggregate training and test MSEs provide a more reliable comparison.
+
+- **Variation across countries and indicators:** Reconstruction accuracy differs across both countries and indicators. For example, the largest discrepancies for CTRY022 appear in FX volatility, inflation, and sovereign risk spreads, while CTRY042 exhibits noticeable differences in earnings growth and equity momentum. This illustrates that compressing 11 indicators into three dimensions does not preserve every indicator equally well.
+
+- **PCA versus autoencoder:** The autoencoder appears to reconstruct several of the unusual observations more accurately, particularly the extreme values for earnings growth in CTRY042 and FX volatility in CTRY022. This is consistent with the autoencoder's ability to capture nonlinear relationships. However, PCA is closer to the observed values for some indicators. Neither method uniformly outperforms the other, and the aggregate test MSE is the better measure of overall performance on unseen countries.
+
+**Key takeaway:** Reconstruction accuracy depends on the country, the indicator, and the method. A lower overall MSE does not imply that a model reconstructs every country or indicator more accurately.
+
+:::
+
+## Interpreting learned representations
+
+::: {.callout-caution collapse="false" title="Task"}
+Recall that the autoencoder's encoder maps each country's 11 standardized indicators, $x_i \in \mathbb{R}^{11}$, into a three-dimensional latent representation, $z_i=f_\theta(x_i)$. This representation contains three learned features: $z_{i1}$, $z_{i2}$, and $z_{i3}$.
+
+Extract these three latent features for each country and plot the first two alongside the corresponding PCA scores.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+latent_3_all <- torch_predict(ae_fits[[3]]$model, X_standardized,
+                              latent = TRUE, n_dimensions = 3L)
+colnames(latent_3_all) <- c("z1", "z2", "z3")
+latent_scores <- data.frame(country_code = country_data$country_code,
+                            latent_3_all, check.names = FALSE)
+pc_train_scores <- predict(pca_train, newdata = X_standardized)[, 1:3, drop = FALSE]
+latent_comparison <- bind_rows(
+  data.frame(country_code = country_data$country_code,
+             method = "PCA", x = pc_train_scores[, 1], y = pc_train_scores[, 2]),
+  data.frame(country_code = country_data$country_code,
+             method = "Autoencoder", x = latent_3_all[, 1], y = latent_3_all[, 2])
+) %>% mutate(unusual = country_code %in% outlier_codes)
+latent_plot <- ggplot(latent_comparison, aes(x, y, color = unusual)) +
+  geom_point() + facet_wrap(~method, scales = "free") +
+  labs(title = "Country Representations: First Two Coordinates",
+       x = "First coordinate", y = "Second coordinate") + theme_minimal()
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+head(latent_scores)
+latent_plot
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Calculate correlations among the first three PCA scores ($z_{i1}^{PCA}$, $z_{i2}^{PCA}$, $z_{i3}^{PCA}$) and among the three autoencoder latent coordinates ($z_{i1}^{AE}$, $z_{i2}^{AE}$, $z_{i3}^{AE}$). Compare the correlations in the training sample with those across all countries. Finally, examine correlations between the autoencoder latent coordinates and the original standardized indicators.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+
+# PCA score correlations
+pc_correlations_train <- cor(pc_train_scores[idx$train, , drop = FALSE])
+pc_correlations_all <- cor(pc_train_scores)
+
+# Autoencoder latent-coordinate correlations
+latent_correlations_train <- cor(latent_3_all[idx$train, , drop = FALSE])
+latent_correlations_all <- cor(latent_3_all)
+
+# Autoencoder coordinates versus original indicators
+feature_indicator_correlations <- cor(latent_3_all, X_standardized)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+
+cat("PCA: Training-Sample Correlations\n")
+round(pc_correlations_train, 3)
+
+cat("\nPCA: All-Country Correlations\n")
+round(pc_correlations_all, 3)
+
+cat("\nAutoencoder: Training-Sample Correlations\n")
+round(latent_correlations_train, 3)
+
+cat("\nAutoencoder: All-Country Correlations\n")
+round(latent_correlations_all, 3)
+
+cat("\nAutoencoder Coordinates versus Standardized Indicators\n")
+round(feature_indicator_correlations, 2)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Why are the PCA scores uncorrelated in the training sample but not necessarily across all countries? Why should we avoid interpreting the autoencoder latent coordinates as if they were ordered, orthogonal principal component scores?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+**PCA:** The principal components are constructed to be orthogonal and ordered by the amount of variance explained in the training sample. Consequently, their training-sample correlation matrix is the identity matrix: correlations between different components are zero. When we apply the same loadings to new countries, the resulting scores need not remain exactly uncorrelated.
+
+**Autoencoder:** Unlike PCA, the autoencoder does not constrain its latent coordinates to be orthogonal or ordered by importance. Therefore, correlations among $z_{i1}^{AE}$, $z_{i2}^{AE}$, and $z_{i3}^{AE}$ need not be zero. Moreover, different encoder/decoder parameterizations can produce different latent coordinates while achieving similar reconstruction accuracy.
+
+Correlations between the autoencoder coordinates and the original indicators help characterize what the network has learned. However, we should interpret the **joint three-dimensional representation**, rather than assume each coordinate uniquely corresponds to Growth, Valuation, or Risk.
+:::
+
+
+# Robustness Checks: Model Comparison
+
+## Sensitivity to outliers
+
+::: {.callout-caution collapse="false" title="Task"}
+Refit both methods after removing CTRY022 and CTRY042. Keep original train/test split assignments, recalculate the scaler from the retained training countries, and evaluate each model on the *same remaining test countries*.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+inlier_idx <- which(!country_data$country_code %in% outlier_codes)
+train_keep <- intersect(idx$train, inlier_idx)
+val_keep <- intersect(idx$validation, inlier_idx)
+test_keep <- intersect(idx$test, inlier_idx)
+trim_center <- colMeans(original[train_keep, , drop = FALSE])
+trim_sd <- apply(original[train_keep, , drop = FALSE], 2, sd)
+trim_standardize <- function(rows) {
+  sweep(sweep(original[rows, , drop = FALSE], 2, trim_center, "-"),
+        2, trim_sd, "/")
+}
+X_train_trim_standardized <- trim_standardize(train_keep)
+X_val_trim_standardized <- trim_standardize(val_keep)
+X_test_trim_standardized <- trim_standardize(test_keep)
+pca_train_trim <- prcomp(X_train_trim_standardized, center = TRUE, scale. = FALSE)
+ae_trim <- fit_autoencoder(X_train_trim_standardized, X_val_trim_standardized, latent_dim = 3L,
+                           seed = 42L, hidden_units = training_settings$hidden_units,
+                           lr = training_settings$lr,
+                           epochs = training_settings$epochs,
+                           patience = training_settings$patience)
+
+# Comparing refitted models on the SAME remaining test countries requires
+# standardizing the ORIGINAL fit's reconstructions back into raw units,
+# then measuring both errors on one common scale (original TRAIN SDs).
+old_test <- X_standardized[test_keep, , drop = FALSE]
+old_pca_raw <- sweep(sweep(pca_reconstruct(pca_train, old_test, 3),
+                            2, train_scale, "*"), 2, train_center, "+")
+old_ae_raw <- sweep(sweep(ae_reconstruction(ae_fits[[3]]$model, old_test),
+                           2, train_scale, "*"), 2, train_center, "+")
+new_pca_raw <- sweep(sweep(pca_reconstruct(pca_train_trim, X_test_trim_standardized, 3),
+                            2, trim_sd, "*"), 2, trim_center, "+")
+new_ae_raw <- sweep(sweep(ae_reconstruction(ae_trim$model, X_test_trim_standardized),
+                           2, trim_sd, "*"), 2, trim_center, "+")
+held_out_raw <- original[test_keep, , drop = FALSE]
+common_standardized_error <- function(reconstructed_raw) {
+  mse(sweep(held_out_raw, 2, train_scale, "/"),
+      sweep(reconstructed_raw, 2, train_scale, "/"))
+}
+robustness_table <- data.frame(
+  Method = rep(c("PCA", "Autoencoder"), 2),
+  Estimation = rep(c("All training countries", "Outliers removed"), each = 2),
+  Test_MSE_common_scale = c(
+    common_standardized_error(old_pca_raw),
+    common_standardized_error(old_ae_raw),
+    common_standardized_error(new_pca_raw),
+    common_standardized_error(new_ae_raw)
+  ),
+  Test_countries = length(test_keep)
+)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+robustness_table
+cat("Retained countries — train:", length(train_keep),
+    "validation:", length(val_keep), "test:", length(test_keep), "\n")
+```
+:::
+
+::: {.callout-tip title="Question"}
+Interpret the reconstruction errors. How does removing the unusual countries affect PCA and autoencoder performance?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+
+The autoencoder achieves lower test reconstruction MSE than PCA under both estimation samples, suggesting that its nonlinear representation preserves more information about the 11 indicators.
+
+Removing CTRY022 and CTRY042 increases test MSE for both methods: from 0.0579 to 0.0651 for PCA and from 0.0466 to 0.0535 for the autoencoder. Thus, the unusual countries appear to contribute useful information during estimation rather than simply distorting the fitted models.
+
+Because we retain the same 20 test countries and evaluate errors using the same standardization scale, differences in MSE reflect changes in model estimation rather than changes in the evaluation sample or measurement units. However, these results come from a relatively small sample and should not be interpreted as evidence that retaining outliers always improves reconstruction accuracy.
+
+:::
+
+## Stability across neural-network seeds
+
+::: {.callout-caution collapse="false" title="Task"}
+Retrain the three-dimensional autoencoder using several fixed initializations. Summarize the resulting validation and test errors without selecting the best model based on test performance.
+:::
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+seeds <- c(11L, 42L, 73L, 104L, 135L)
+seed_results <- bind_rows(lapply(seeds, function(s) {
+  fit <- fit_autoencoder(X_train_standardized, X_val_standardized, latent_dim = 3L, seed = s,
+                         hidden_units = training_settings$hidden_units,
+                         lr = training_settings$lr,
+                         epochs = training_settings$epochs,
+                         patience = training_settings$patience)
+  data.frame(seed = s, best_epoch = fit$best_epoch,
+             validation_mse = mse(X_val_standardized, ae_reconstruction(fit$model, X_val_standardized)),
+             test_mse = mse(X_test_standardized, ae_reconstruction(fit$model, X_test_standardized)))
+}))
+seed_summary <- seed_results %>% summarise(
+  mean_test_mse = mean(test_mse), sd_test_mse = sd(test_mse),
+  min_test_mse = min(test_mse), max_test_mse = max(test_mse)
+)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+seed_results
+
+```
+:::
+
+::: {.callout-tip title="Question"}
+What role does the random seed play in training the autoencoder? How do you interpret the variation in reconstruction errors across the five seeds?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+
+The random seed controls stochastic elements of training, particularly the initialization of the neural network's weights. Different initializations can lead the optimization algorithm to different solutions, even when the architecture, training data, and hyperparameters remain unchanged. Setting a seed makes the results reproducible.
+
+The results reveal meaningful variation in reconstruction accuracy. Test MSE ranges from approximately **0.0406 (seed 135) to 0.0580 (seed 73)**, while the best training epoch ranges from 833 to 1800. This suggests that the autoencoder's performance is somewhat sensitive to initialization and optimization. Unlike PCA, which has a deterministic solution for a given dataset (apart from sign choices and possible degeneracies), neural networks may converge to different solutions. Consequently, we should be cautious about drawing conclusions from a single autoencoder fit. Evaluating multiple seeds provides a more reliable assessment of its typical performance and stability.
+
+:::
+
+# Conclusions
+
+::: {.callout-tip title="Question"}
+When does the extra flexibility of a nonlinear autoencoder justify greater complexity relative to PCA in this country-equity application?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+```{r}
+#| echo: false
+cat("Three-dimensional models: held-out comparison\n")
+print(comparison %>% filter(Dimensions == 3) %>%
+        select(Method, Train_MSE, Validation_MSE, Test_MSE))
+```
+- Reconstruction: Compare the measured held-out errors, not just the lower training error or the fact that the simulated data include nonlinearities.
+- Interpretation: PCA offers orthogonal, variance-ordered components with explicit loadings. Autoencoder features are generally neither ordered nor uniquely interpretable.
+- Complexity: The autoencoder requires architectural choices, iterative optimization, early stopping, and checks for instability/overfitting.
+- Robustness: Consider whether any apparent autoencoder advantage survives changes in the fitting sample and initial random seed.
+- Investment use: Either representation may help characterize countries, but neither directly predicts returns or prescribes ETF purchases.
+
+A material, stable reduction in *held-out* reconstruction MSE can justify the extra complexity when the goal is faithful compression. If the differences are small or unstable, PCA may be preferable for its simplicity and interpretability. The test sample contains only about 20 countries, so the result is an illustration rather than definitive evidence of superiority.
+:::
