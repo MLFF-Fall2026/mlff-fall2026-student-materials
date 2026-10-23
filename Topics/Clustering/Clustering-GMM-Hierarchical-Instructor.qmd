@@ -1,0 +1,1109 @@
+---
+title: "Gaussian Mixture Models and Hierarchical Clustering"
+subtitle: "Machine Learning For Finance | An Extension of K-Means"
+author: Mike Aguilar
+format:
+  html:
+    toc: true
+    toc-depth: 4
+    toc-location: left
+    embed-resources: true
+    code-fold: true
+    code-summary: "Code"
+editor: visual
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# Housekeeping
+
+```{r}
+#| label: setup
+#| include: false
+
+cat("\014")  # clear the console when run interactively
+rm(list = ls())  # begin from a clean workspace
+
+needed <- c("here", "readxl", "dplyr", "tidyr", "tibble", "ggplot2", "mclust", "cluster", "knitr")
+missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing)) {
+  stop("Install these R packages before rendering: ", paste(missing, collapse = ", "))
+}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(tibble)
+  library(ggplot2)
+  library(mclust)
+  library(cluster)
+})
+set.seed(4821)
+
+# Independent of whether the existing project uses 'data/' or 'Data/'.
+workbook_options <- unique(c(
+  here::here("data", "industry_fundamentals.xlsx"),
+  here::here("Data", "industry_fundamentals.xlsx"),
+  file.path("data", "industry_fundamentals.xlsx"),
+  file.path("Data", "industry_fundamentals.xlsx")
+))
+available_workbooks <- workbook_options[file.exists(workbook_options)]
+if (!length(available_workbooks)) {
+  script_options <- unique(c(here::here("SimulatedData-KMeans.R"), "SimulatedData-KMeans.R"))
+  available_scripts <- script_options[file.exists(script_options)]
+  if (!length(available_scripts)) {
+    stop("Cannot find industry_fundamentals.xlsx. Place the existing workbook in data/ or Data/, ",
+         "or place SimulatedData-KMeans.R alongside this QMD to generate it.")
+  }
+  if (!requireNamespace("writexl", quietly = TRUE) ||
+      !requireNamespace("tidyverse", quietly = TRUE)) {
+    stop("To generate the workbook from the unchanged simulation script, install ",
+         "'writexl' and 'tidyverse', then rerender. ",
+         "Alternatively provide the existing workbook.")
+  }
+  dir.create(here::here("Data"), recursive = TRUE, showWarnings = FALSE)
+  # This is the original script; instructor-only latent labels are never used in fitting.
+  invisible(capture.output(source(available_scripts[[1]], local = TRUE)))
+  available_workbooks <- workbook_options[file.exists(workbook_options)]
+  if (!length(available_workbooks)) stop("Simulation ran, but the expected workbook was not created.")
+}
+workbook_path <- available_workbooks[[1]]
+
+# Reusable presentation helpers: all reported growth figures are percentage points.
+profile_clusters <- function(industry_data, labels, method_name) {
+  stopifnot(nrow(industry_data) == length(labels))
+  industry_data %>%
+    mutate(cluster = as.integer(labels)) %>%
+    group_by(cluster) %>%
+    summarise(
+      n = n(),
+      Revenue_Growth_pct = 100 * mean(Revenue_Growth),
+      Cost_Growth_pct = 100 * mean(Cost_Growth),
+      .groups = "drop"
+    ) %>%
+    mutate(method = method_name, .before = 1) %>%
+    arrange(Revenue_Growth_pct)
+}
+
+plot_partition <- function(features, labels, plot_title) {
+  features %>%
+    mutate(cluster = factor(labels)) %>%
+    ggplot(aes(Revenue_Growth_z, Cost_Growth_z, color = cluster)) +
+    geom_point(size = 2.5, alpha = 0.9) +
+    coord_equal() +
+    labs(title = plot_title,
+         subtitle = "49 industries; two standardized growth-rate features",
+         x = "Revenue Growth (z)", y = "Cost Growth (z)", color = "Group") +
+    theme_minimal(base_size = 12)
+}
+
+mean_silhouette <- function(labels, distance_object) {
+  if (length(unique(labels)) < 2 || length(unique(labels)) >= attr(distance_object, "Size")) return(NA_real_)
+  mean(silhouette(as.integer(factor(labels)), distance_object)[, "sil_width"])
+}
+
+membership_table <- function(fit, industry_names) {
+  z <- as.matrix(fit$z)
+  if (ncol(z) == 1) z <- matrix(z, ncol = 1)
+  stopifnot(nrow(z) == length(industry_names))
+  assigned <- max.col(z, ties.method = "first")
+  first_prob <- apply(z, 1, max)
+  second_prob <- if (ncol(z) > 1) apply(z, 1, function(p) sort(p, decreasing = TRUE)[2]) else rep(NA_real_, nrow(z))
+  probs <- as_tibble(z, .name_repair = "minimal")
+  names(probs) <- paste0("P_Component", seq_len(ncol(z)))
+  tibble(Industry = industry_names,
+         component = assigned,
+         highest_probability = first_prob,
+         second_probability = second_prob,
+         uncertainty = 1 - first_prob) %>%
+    bind_cols(probs)
+}
+
+component_cov <- function(fit, component) {
+  sigmas <- fit$parameters$variance$sigma
+  if (is.null(sigmas)) stop("No covariance matrices reported by model.")
+  if (length(dim(sigmas)) == 2) return(sigmas)
+  sigmas[, , component, drop = TRUE]
+}
+
+component_details <- function(fit, centers, scales) {
+  means <- fit$parameters$mean
+  if (is.null(dim(means))) means <- matrix(means, ncol = 1)
+  proportions <- fit$parameters$pro
+  if (is.null(proportions)) proportions <- rep(1 / fit$G, fit$G)
+  out <- lapply(seq_len(fit$G), function(j) {
+    cov_j <- component_cov(fit, j)
+    tibble(
+      component = j,
+      mixing_share = proportions[[j]],
+      Revenue_Growth_pct = 100 * (means[1, j] * scales[[1]] + centers[[1]]),
+      Cost_Growth_pct = 100 * (means[2, j] * scales[[2]] + centers[[2]]),
+      Revenue_Growth_sd_pct = 100 * sqrt(cov_j[1, 1]) * scales[[1]],
+      Cost_Growth_sd_pct = 100 * sqrt(cov_j[2, 2]) * scales[[2]],
+      within_component_corr = cov_j[1, 2] / sqrt(cov_j[1, 1] * cov_j[2, 2])
+    )
+  })
+  bind_rows(out) %>% arrange(Revenue_Growth_pct)
+}
+
+# A two-dimensional normal density, used solely to draw estimated GMM decision regions.
+normal_density_2d <- function(coords, mu, covariance) {
+  displacement <- sweep(as.matrix(coords), 2, as.numeric(mu), "-")
+  inv <- solve(covariance)
+  quadratic <- rowSums((displacement %*% inv) * displacement)
+  exp(-0.5 * quadratic) / (2 * pi * sqrt(det(covariance)))
+}
+
+# Build a 90% bivariate-normal probability ellipse for one fitted component.
+component_ellipse <- function(fit, j, level = 0.90) {
+  covariance <- component_cov(fit, j)
+  eig <- eigen(covariance, symmetric = TRUE)
+  stopifnot(all(eig$values > 0))
+  ang <- seq(0, 2 * pi, length.out = 181)
+  boundary <- eig$vectors %*%
+    diag(sqrt(eig$values * stats::qchisq(level, df = 2)), 2) %*%
+    rbind(cos(ang), sin(ang))
+  mu <- fit$parameters$mean[, j]
+  tibble(Revenue_Growth_z = as.numeric(mu[1] + boundary[1, ]),
+         Cost_Growth_z = as.numeric(mu[2] + boundary[2, ]),
+         component = factor(j))
+}
+```
+
+# Background
+
+You are an analyst at a systematic investment manager that invests primarily in industry ETFs. Your portfolio manager wants to identify groups of industries with similar operating characteristics based on **Revenue Growth** and **Operating Cost Growth**.
+
+The earlier K-means lesson demonstrated that a clustering result depends on feature selection, scale, the number of groups, and influential observations. It also showed that a **two-cluster** representation of this dataset is compelling, while three clusters provide greater economic granularity.
+
+The new question is not simply whether another algorithm finds the same assignments. It is: **What further information can a different representation of the industries provide?**
+
+::: {.callout-tip title="Question"}
+If one industry's financial growth profile lies between two identified groups, what information would be helpful beyond a single group label?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+We might want to know whether the assignment is unambiguous or whether the industry's characteristics are consistent with multiple groups. Gaussian mixtures offer one model-based way to express such ambiguity through posterior component-membership probabilities.
+:::
+
+# Data and Feature Engineering
+
+## Read and validate the industry panel
+
+::: {.callout-caution title="Task"}
+Load the existing two-sheet workbook. Verify that the unit of observation is an industry-year, that each industry appears in both years, and that Profit equals Revenue minus Operating Cost.
+:::
+
+```{r}
+#| output: false
+industry_fundamentals <- readxl::read_excel(workbook_path, sheet = "Data")
+data_dictionary <- readxl::read_excel(workbook_path, sheet = "Data_Dictionary")
+
+required <- c("Industry", "Year", "Revenue", "Operating_Cost", "Profit")
+stopifnot(all(required %in% names(industry_fundamentals)))
+stopifnot(!anyNA(industry_fundamentals[, required]))
+stopifnot(!anyDuplicated(industry_fundamentals[c("Industry", "Year")]))
+years <- sort(unique(industry_fundamentals$Year))
+stopifnot(length(years) == 2)
+stopifnot(nrow(industry_fundamentals) == 100,
+          n_distinct(industry_fundamentals$Industry) == 50)
+stopifnot(all(industry_fundamentals %>% dplyr::count(Industry) %>% pull(n) == 2))
+stopifnot(all(abs(industry_fundamentals$Profit -
+                  (industry_fundamentals$Revenue - industry_fundamentals$Operating_Cost)) < 1e-7))
+
+panel_check <- industry_fundamentals %>%
+  summarise(rows = n(), industries = n_distinct(Industry), years = n_distinct(Year))
+panel_check
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+panel_check
+knitr::kable(data_dictionary)
+```
+:::
+
+## Construct growth features
+
+::: {.callout-caution title="Task"}
+Calculate simple growth rates between the two years. Exclude Profit Growth from the main clustering feature matrix; it is mechanically related to Revenue and Operating Cost and can be unstable when the initial profit base is small.
+:::
+
+```{r}
+#| output: false
+growth_rates <- industry_fundamentals %>%
+  arrange(Industry, Year) %>%
+  group_by(Industry) %>%
+  summarise(
+    Revenue_Year1 = first(Revenue),
+    Revenue_Year2 = last(Revenue),
+    Operating_Cost_Year1 = first(Operating_Cost),
+    Operating_Cost_Year2 = last(Operating_Cost),
+    Profit_Year1 = first(Profit),
+    Profit_Year2 = last(Profit),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Revenue_Growth = Revenue_Year2 / Revenue_Year1 - 1,
+    Cost_Growth = Operating_Cost_Year2 / Operating_Cost_Year1 - 1,
+    Profit_Growth = Profit_Year2 / Profit_Year1 - 1
+  )
+stopifnot(all(is.finite(as.matrix(growth_rates[, c("Revenue_Growth", "Cost_Growth")]))))
+
+# The original lesson excludes Industry07 from growth clustering, but
+# keeps Industry32, whose unusual size is not unusual growth.
+growth_rates_trim <- growth_rates %>% filter(Industry != "Industry07")
+stopifnot(nrow(growth_rates_trim) == 49, "Industry32" %in% growth_rates_trim$Industry)
+
+x_raw <- as.matrix(growth_rates_trim[, c("Revenue_Growth", "Cost_Growth")])
+feature_center <- colMeans(x_raw)
+feature_scale <- apply(x_raw, 2, sd)
+stopifnot(all(feature_scale > 0))
+X_growth_2feat <- scale(x_raw, center = feature_center, scale = feature_scale)
+rownames(X_growth_2feat) <- growth_rates_trim$Industry
+
+growth_features <- growth_rates_trim %>%
+  transmute(Industry,
+            Revenue_Growth_z = as.numeric(X_growth_2feat[, 1]),
+            Cost_Growth_z = as.numeric(X_growth_2feat[, 2]))
+
+data_check <- tibble(
+  sample = c("Full cross-section", "Baseline growth analysis"),
+  industries = c(nrow(growth_rates), nrow(growth_rates_trim))
+)
+summary_features <- growth_features %>%
+  summarise(across(c(Revenue_Growth_z, Cost_Growth_z),
+                   list(mean = mean, sd = sd)))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(data_check)
+knitr::kable(summary_features, digits = 3)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Why must all three clustering algorithms use the *same* standardized features and the *same* 49 industries in the baseline comparison?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+Otherwise, differences could be caused by changing the input rather than by the algorithms. Standardization gives the two growth-rate features comparable numerical scales. `Industry07` is excluded from the baseline because it is extreme in the growth feature space; `Industry32` remains because it is primarily an outlier in dollar levels.
+:::
+
+# K-Means: The Benchmark
+
+K-means partitions the industries into $K$ groups by minimizing the within-cluster squared Euclidean distances to centroids:
+
+$$
+\min_{\mathcal C_1,\ldots,\mathcal C_K,\,\mu_1,\ldots,\mu_K}
+\sum_{k=1}^{K}\sum_{i\in\mathcal C_k}\lVert x_i-\mu_k\rVert^2.
+$$
+
+Every industry is assigned to exactly one group. These are **hard assignments**.
+
+::: {.callout-caution title="Task"}
+Fit the $K=2$ and $K=3$ K-means benchmarks using the same seed (`4821`) and `nstart = 20` from the earlier lesson. Inspect cluster sizes, centroids, and average growth rates in original economic units.
+:::
+
+```{r}
+#| output: false
+fit_kmeans <- function(k, x = X_growth_2feat) {
+  set.seed(4821)
+  kmeans(x, centers = k, nstart = 20)
+}
+km_2 <- fit_kmeans(2)
+km_3 <- fit_kmeans(3)
+
+kmeans_profiles <- bind_rows(
+  profile_clusters(growth_rates_trim, km_2$cluster, "K-means K=2"),
+  profile_clusters(growth_rates_trim, km_3$cluster, "K-means K=3")
+)
+kmeans_centers <- bind_rows(lapply(list(km_2, km_3), function(fit) {
+  as_tibble(fit$centers) %>%
+    rename(Revenue_Growth_z = Revenue_Growth,
+           Cost_Growth_z = Cost_Growth) %>%
+    mutate(cluster = seq_len(nrow(fit$centers)),
+           K = nrow(fit$centers), .before = 1)
+}))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(kmeans_profiles, digits = 2)
+knitr::kable(kmeans_centers, digits = 3)
+```
+:::
+
+::: {.callout-caution title="Task"}
+Plot both partitions using identical axes. Inspect which industries are subdivided when moving from two to three groups.
+:::
+
+```{r}
+#| output: false
+kmeans_long <- bind_rows(
+  growth_features %>% mutate(method = "K-means: K=2", group = factor(km_2$cluster)),
+  growth_features %>% mutate(method = "K-means: K=3", group = factor(km_3$cluster))
+)
+plot_kmeans_benchmark <- ggplot(
+  kmeans_long, aes(Revenue_Growth_z, Cost_Growth_z, color = group)
+) +
+  geom_point(size = 2.5) +
+  facet_wrap(~ method) +
+  coord_equal() +
+  labs(x = "Revenue Growth (z)", y = "Cost Growth (z)", color = "Group",
+       title = "K-means partitions of the same industries") +
+  theme_minimal(base_size = 12)
+
+kmeans_cross <- table(K2 = km_2$cluster, K3 = km_3$cluster)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+plot_kmeans_benchmark
+kmeans_cross
+```
+:::
+
+::: {.callout-tip title="Question"}
+Does a three-group solution necessarily improve the *quality* of clustering simply because it reduces K-means within-cluster sum of squares?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+No. Within-cluster squared error cannot increase when extra clusters are allowed, but a more granular partition may have lower separation according to a criterion such as silhouette width. The earlier lesson favored $K=2$ by several diagnostics, while $K=3$ offers a meaningful alternative interpretation. Neither number is a known ground-truth label count that the algorithms must reproduce.
+:::
+
+# Gaussian Mixture Models
+
+## Why a mixture model?
+
+Unlike K-means, a Gaussian Mixture Model represents the joint distribution of the two growth features as a weighted mixture of Gaussian components:
+
+$$
+f(x_i)=\sum_{g=1}^{G}\pi_g\,\phi(x_i\mid\mu_g,\Sigma_g),
+\qquad \pi_g\geq 0,\quad\sum_{g=1}^{G}\pi_g=1.
+$$
+
+Here $x_i$ contains the two standardized growth rates for industry $i$. The mixing proportion $\pi_g$ indicates a component's prevalence, $\mu_g$ is its mean vector, and $\Sigma_g$ describes dispersion and dependence between the features. The multivariate normal density $\phi$ specifies the probability density associated with a component.
+
+GMM fits the observed data by maximizing a likelihood, not by minimizing the K-means objective. It supports *soft* assignments: an industry may have nonzero probabilities of belonging to multiple components.
+
+::: {.callout-tip title="Question"}
+How does allowing a full covariance matrix change the shapes and orientations of groups that a GMM can represent?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+A full covariance matrix can represent elongated and tilted elliptical component contours. The estimated variances determine spread along the axes, and covariance controls the orientation. K-means uses ordinary Euclidean distances to centroids; its nearest-centroid decision regions have linear boundaries, even when actual groups are elongated or unequal in size.
+:::
+
+## Estimate two- and three-component GMMs
+
+::: {.callout-caution title="Task"}
+Fit a two-component and a three-component GMM with `mclust::Mclust()`.
+
+Use the VVV covariance model, wherein each component has its own unconstrained covariance.  A potentially useful alternative is the slightly less flexible EEE, wherein the components share one covariance matrix. 
+
+Record the selected covariance form, log likelihood, BIC, and mixing proportions. 
+
+:::
+
+```{r}
+#| output: false
+set.seed(4821)
+gmm_2 <- Mclust(X_growth_2feat, G = 2, modelNames = c( "VVV"))
+set.seed(4821)
+gmm_3 <- Mclust(X_growth_2feat, G = 3, modelNames = c( "VVV"))
+stopifnot(!is.null(gmm_2), !is.null(gmm_3))
+
+gmm_fits <- list(`G=2` = gmm_2, `G=3` = gmm_3)
+gmm_fit_summary <- bind_rows(lapply(names(gmm_fits), function(name) {
+  fit <- gmm_fits[[name]]
+  tibble(G = fit$G, covariance_model = fit$modelName,
+         log_likelihood = fit$loglik, mclust_BIC = fit$bic)
+}))
+gmm_component_summary <- bind_rows(lapply(names(gmm_fits), function(name) {
+  component_details(gmm_fits[[name]], feature_center, feature_scale) %>%
+    mutate(G = gmm_fits[[name]]$G, covariance_model = gmm_fits[[name]]$modelName, .before = 1)
+}))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(gmm_fit_summary, digits = 2)
+knitr::kable(gmm_component_summary, digits = 3)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Which model seems to fit better? 
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The 3 component model seems to fit better, as indicated by the lower information criterion. 
+:::
+
+
+::: {.callout-tip title="Question"}
+Within the second table, interpret the "mixing_share".  Interpret the economic meaning of the clusters.  Explain the relevance of within_component_cor in our case.  
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+
+- Mixing share: The `mixing_share` estimates the proportion of the overall population represented by each Gaussian component. For example, in the two-component model, Component 1 has a mixing share of 0.653, so the model estimates that roughly 65.3% of industries come from that component, while about 34.7% come from Component 2. These are model-estimated proportions, not simply the fraction of industries assigned to each component.
+
+- Interpretation of the two-component model:  
+  - Component 1 represents industries with essentially flat average growth: Revenue Growth is about 0.15% and Cost Growth about 0.37%. This is the larger component, representing about 65% of the distribution.
+  - Component 2 represents much faster-growing industries: Revenue Growth averages about 21.8% and Cost Growth about 25.3%. It represents about 35% of the distribution.
+
+  Thus, the two-component GMM primarily separates industries into a low-growth group and a high-growth group.
+
+- Interpretation of the three-component model: The additional component splits the lower-growth industries into two economically different groups:
+  - Component 1: contracting industries, with average Revenue Growth of about -6.1% and Cost Growth of about -4.2%.
+  - Component 3: modestly growing industries, with Revenue Growth around 3.7% and Cost Growth around 2.9%.
+  - Component 2: high-growth industries, with Revenue Growth around 21.8% and Cost Growth around 25.3%.
+
+  The three-component model therefore distinguishes contracting, moderate-growth, and high-growth industries.
+
+- Within-component correlation: `within_component_corr` measures the estimated relationship between Revenue Growth and Cost Growth among industries belonging to a given component. A positive value means that within that type of industry, higher Revenue Growth tends to be associated with higher Cost Growth.
+
+  For example, the correlation of 0.852 in Component 1 of the two-component model indicates that among the low-growth industries, Revenue Growth and Cost Growth tend to move closely together. The corresponding correlation of 0.397 for the high-growth component indicates a weaker relationship. Economically, this matters because two components can differ not only in their average growth rates, but also in how revenue and costs move together within the group. That covariance structure is one reason a GMM can describe the data more flexibly than K-means.
+
+:::
+
+
+
+::: {.callout-caution title="Task"}
+For each fitted GMM, calculate every industry's posterior membership probabilities. Arrange by uncertainty.  
+:::
+
+```{r}
+#| output: false
+membership_2 <- membership_table(gmm_2, growth_features$Industry)
+membership_3 <- membership_table(gmm_3, growth_features$Industry)
+stopifnot(
+  max(abs(rowSums(as.matrix(gmm_2$z)) - 1)) < 1e-8,
+  max(abs(rowSums(as.matrix(gmm_3$z)) - 1)) < 1e-8,
+  all(membership_2$component == gmm_2$classification),
+  all(membership_3$component == gmm_3$classification)
+)
+probability_examples_g2 <- membership_2 %>%
+  arrange(desc(uncertainty)) %>%
+  select(Industry, component, starts_with("P_Component"), highest_probability,
+         second_probability, uncertainty)
+
+probability_examples_g3 <- membership_3 %>%
+  arrange(desc(uncertainty)) %>%
+  select(Industry, component, starts_with("P_Component"), highest_probability,
+         second_probability, uncertainty) 
+
+
+
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(probability_examples_g2, digits = 3)
+knitr::kable(probability_examples_g3, digits = 3)
+
+```
+:::
+
+::: {.callout-tip title="Question"}
+How is uncertainty computed? 
+
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+Earlier in the file we created a function to compute uncertainty, via 1 minus the highest posterior membership probability. 
+:::
+
+::: {.callout-tip title="Question"}
+Constrast the posterior probabilities for the G = 2 and G = 3 models. 
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+
+The G = 2 model seems to separate the observations perfectly.  There is no uncertainty; i.e. probabilities are always either 0 or 1.  
+
+For G=3 that is the case for some industries, but several others are split between cluster 1 and cluster 3. 
+
+:::
+
+
+## Soft membership as a visualization
+
+::: {.callout-caution title="Task"}
+Show the same industries colored by their most likely component and by assignment uncertainty. Overlay 90% probability ellipses for the fitted Gaussian components; these are contours from the fitted *component distributions*, not confidence intervals for the means.
+:::
+
+```{r}
+#| output: false
+gmm_ellipses <- bind_rows(lapply(seq_len(gmm_2$G), function(j) component_ellipse(gmm_2, j)))
+gmm_vis <- growth_features %>%
+  left_join(membership_2 %>% select(Industry, component, uncertainty), by = "Industry")
+
+plot_gmm_membership <- ggplot(gmm_vis, aes(Revenue_Growth_z, Cost_Growth_z)) +
+  geom_path(data = gmm_ellipses,
+            aes(Revenue_Growth_z, Cost_Growth_z, color = component, group = component),
+            inherit.aes = FALSE, linewidth = 0.8) +
+  geom_point(aes(color = factor(component)), size = 2.5) +
+  coord_equal() +
+  labs(title = "GMM: most likely component and 90% Gaussian component contours",
+       x = "Revenue Growth (z)", y = "Cost Growth (z)", color = "Component") +
+  theme_minimal(base_size = 12)
+
+plot_gmm_uncertainty <- ggplot(gmm_vis, aes(Revenue_Growth_z, Cost_Growth_z)) +
+  geom_point(aes(size = uncertainty, color = uncertainty), alpha = 0.95) +
+  scale_color_gradient(low = "#1C7ED6", high = "#CB3B2E") +
+  coord_equal() +
+  labs(title = "GMM: assignment uncertainty",
+       subtitle = "Uncertainty = 1 - largest posterior membership probability",
+       x = "Revenue Growth (z)", y = "Cost Growth (z)") +
+  theme_minimal(base_size = 12)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+plot_gmm_membership
+plot_gmm_uncertainty
+```
+:::
+
+::: {.callout-caution title="Task"}
+Compare decision regions for the $K=2$ K-means fit and $G=2$ GMM fit. Keep in mind that numeric labels are arbitrary and should not be interpreted as directly matched groups.
+:::
+
+```{r}
+#| output: false
+x_seq <- seq(min(X_growth_2feat[, 1]) - 0.6, max(X_growth_2feat[, 1]) + 0.6, length.out = 140)
+y_seq <- seq(min(X_growth_2feat[, 2]) - 0.6, max(X_growth_2feat[, 2]) + 0.6, length.out = 140)
+decision_grid <- expand.grid(Revenue_Growth_z = x_seq, Cost_Growth_z = y_seq)
+grid_matrix <- as.matrix(decision_grid)
+
+km_distances <- vapply(seq_len(2), function(j) {
+  rowSums(sweep(grid_matrix, 2, km_2$centers[j, ], "-")^2)
+}, numeric(nrow(grid_matrix)))
+km_region <- max.col(-km_distances, ties.method = "first")
+
+component_densities <- vapply(seq_len(gmm_2$G), function(j) {
+  gmm_2$parameters$pro[j] * normal_density_2d(
+    grid_matrix, gmm_2$parameters$mean[, j], component_cov(gmm_2, j))
+}, numeric(nrow(grid_matrix)))
+gmm_region <- max.col(component_densities, ties.method = "first")
+
+decision_plot_data <- bind_rows(
+  decision_grid %>% mutate(group = factor(km_region), method = "K-means (K=2)"),
+  decision_grid %>% mutate(group = factor(gmm_region), method = "GMM (G=2)")
+)
+observed_decision_data <- bind_rows(
+  growth_features %>% mutate(method = "K-means (K=2)"),
+  growth_features %>% mutate(method = "GMM (G=2)")
+)
+plot_decision_regions <- ggplot(decision_plot_data,
+                                aes(Revenue_Growth_z, Cost_Growth_z)) +
+  geom_raster(aes(fill = group), alpha = 0.25) +
+  geom_point(data = observed_decision_data, inherit.aes = FALSE,
+             aes(Revenue_Growth_z, Cost_Growth_z), size = 0.95) +
+  facet_wrap(~ method) +
+  coord_equal() +
+  labs(title = "Model-implied classification regions",
+       subtitle = "Group numbers are arbitrary within each method",
+       x = "Revenue Growth (z)", y = "Cost Growth (z)", fill = "Group") +
+  theme_minimal(base_size = 12)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+plot_decision_regions
+```
+:::
+
+::: {.callout-tip title="Question"}
+How can an industry receive a different assignment in the GMM than in K-means, even though we used the same two features and the same number of groups?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+In our case, the actual observed industries appear to receive the same two-group assignments under GMM and K-means, even though the classification regions differ substantially.
+
+However, that may not always be the case. K-means assigns each point to its nearest centroid in standardized Euclidean distance. A GMM assignment depends on component means and mixing weights and covariance matrices. Its most-likely-component regions need not match the nearest-centroid regions. Compare the plotted boundaries before deciding whether this difference is empirically important in this dataset.
+:::
+
+## Choosing the number of Gaussian components
+
+::: {.callout-caution title="Task"}
+Fit GMMs with $G=1,\ldots,5$ using a small range of interpretable covariance models (`EII`, `VII`, `EEE`, `VVV`). Compare Bayesian Information Criterion values and report the preferred model, even if it does not have two or three components.
+:::
+
+```{r}
+#| output: false
+set.seed(4821)
+gmm_search <- Mclust(
+  X_growth_2feat,
+  G = 1:5,
+  modelNames = c("EII", "VII", "EEE", "VVV")
+)
+stopifnot(!is.null(gmm_search))
+
+bic_table <- as.data.frame(as.table(as.matrix(gmm_search$BIC))) %>%
+  setNames(c("G", "covariance_model", "mclust_BIC")) %>%
+  mutate(G = as.integer(as.character(G))) %>%
+  filter(is.finite(mclust_BIC)) %>%
+  arrange(desc(mclust_BIC))
+stopifnot(nrow(bic_table) > 0)
+best_bic <- bic_table %>% slice_head(n = 1)
+
+plot_bic <- ggplot(bic_table,
+                   aes(G, mclust_BIC, color = covariance_model)) +
+  geom_line() + geom_point(size = 2) +
+  scale_x_continuous(breaks = 1:5) +
+  labs(title = "GMM model selection with mclust BIC",
+       subtitle = "Higher is better under the mclust convention",
+       x = "Number of Gaussian components (G)",
+       y = "mclust BIC", color = "Covariance") +
+  theme_minimal(base_size = 12)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(bic_table, digits = 2)
+plot_bic
+```
+:::
+
+For the usual textbook convention, $\mathrm{BIC}=-2\log\widehat L+p\log n$ and **lower** is preferable. `mclust` reports the negative of that expression, $2\log\widehat L-p\log n$, so the preferred model **maximizes** its reported BIC.
+
+The preferred model among those evaluated has `r best_bic$G[[1]]` component(s) and covariance structure `r best_bic$covariance_model[[1]]`, with `mclust` BIC `r round(best_bic$mclust_BIC[[1]], 2)`.
+
+
+# Hierarchical Clustering
+
+## Distances and agglomerative merges
+
+Agglomerative hierarchical clustering starts with 49 singleton industries and repeatedly merges two groups until only one remains. The entire sequence can be represented as a **dendrogram**; choosing $K$ is a decision about where to cut that tree.
+
+The hierarchy depends on a distance measure **and** a linkage rule:
+
+- **Ward's method (`ward.D2`)** chooses merges based on the incremental increase in pooled within-cluster squared error, using Euclidean input distances.
+- **Single linkage** uses the smallest distance between any observation in one group and any observation in the other, which can yield *chaining*.
+- **Complete linkage** uses the largest intergroup observation-to-observation distance and tends to favor compact groups.
+
+::: {.callout-caution title="Task"}
+Compute Euclidean distances between the standardized industry growth profiles. Fit Ward, single, and complete linkage to that same distance matrix.
+:::
+
+```{r}
+#| output: false
+growth_distance <- dist(X_growth_2feat, method = "euclidean")
+hc_ward <- hclust(growth_distance, method = "ward.D2")
+hc_single <- hclust(growth_distance, method = "single")
+hc_complete <- hclust(growth_distance, method = "complete")
+stopifnot(length(hc_ward$height) == nrow(X_growth_2feat) - 1)
+
+merges_summary <- tibble(
+  method = c("Ward.D2", "Single", "Complete"),
+  number_of_merges = c(length(hc_ward$height), length(hc_single$height), length(hc_complete$height)),
+  final_merge_height = c(tail(hc_ward$height, 1), tail(hc_single$height, 1), tail(hc_complete$height, 1))
+)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(merges_summary, digits = 3)
+```
+:::
+
+::: {.callout-tip title="Question"}
+What does the final merge tell us, and can we compare the heights across Ward and single linkage numerically as though they were identical distance measures?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The final merge combines the last two remaining groups. Its height is determined by the particular linkage criterion and is not necessarily the simple distance between two individual industries. Different linkage methods encode different quantities; the *shape and ordering* of the hierarchy are more meaningful than a direct comparison of their vertical scales.
+:::
+
+## Read a dendrogram
+
+::: {.callout-caution title="Task"}
+Draw the Ward dendrogram for $K=3$ cuts. 
+:::
+
+```{r}
+#| fig-width: 12
+#| fig-height: 6
+#| output: false
+
+ward_3 <- cutree(hc_ward, k = 3)
+
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 13
+#| fig-height: 7
+plot(hc_ward, labels = growth_features$Industry,
+     main = "Ward Hierarchical Clustering: K = 3 Cut",
+     xlab = "Industry", sub = "", cex = 0.58, hang = -1)
+rect.hclust(hc_ward, k = 3, border = "#2877BB")
+```
+:::
+
+::: {.callout-tip title="Question"}
+What does a K=3 cut mean? 
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+A \(K=3\) cut stops the hierarchical clustering process when exactly three clusters remain, shown by the blue rectangles.
+
+  - Cluster 1 (left): 17 industries; final internal merger at height 2.0.
+  - Cluster 2 (middle): 17 industries; final internal merger at height 0.8.
+  - Cluster 3 (right): 16 industries; final internal merger at height 1.8.
+:::
+
+::: {.callout-tip title="Question"}
+The middle cluster has lower merger heights than the left and right clusters. What does this imply?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+
+The vertical axis (Height) measures dissimilarity under Ward's clustering criterion. Higher mergers indicate greater increases in within-cluster variation.
+
+The middle cluster has the lowest final merger height (0.8), suggesting that its industries are more tightly grouped under Ward's criterion than those in the other two clusters.
+:::
+
+
+::: {.callout-tip title="Question"}
+With K = 3, why are clusters 2 and 3 (middle and right) separated? 
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The middle and right clusters merge at a height of approximately 3.8, reducing the number of clusters from three to two.
+
+A \(K=3\) cut stops the process before this merger. Any horizontal cut between heights 2.0 and 3.8 produces the three clusters shown.
+
+:::
+
+
+::: {.callout-tip title="Question"}
+What does the low merger height of Industry02 and Industry25 imply? 
+
+By contrast, what does the high merger height of Cluster 1 and the combined Clusters 2 and 3 imply?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+
+- Industry02 and Industry25: Merge at a low height (approximately 0.15), indicating that they are relatively similar based on the features used for clustering.
+
+- Cluster 1 and the combined Clusters 2 and 3: Merge at a much greater height (approximately 12.6), indicating substantial dissimilarity between these two groups.
+:::
+
+## Compare linkage methods
+
+::: {.callout-caution title="Task"}
+Compare Ward, single, and complete linkage. Inspect whether single linkage chains together many industries and isolates a small number of observations. Summarize the sizes and economic profiles of the groups under $K=2$ and $K=3$.
+:::
+
+```{r}
+#| output: false
+
+ward_2 <- cutree(hc_ward, k = 2)
+ward_3 <- cutree(hc_ward, k = 3)
+single_2 <- cutree(hc_single, k = 2)
+single_3 <- cutree(hc_single, k = 3)
+complete_2 <- cutree(hc_complete, k = 2)
+complete_3 <- cutree(hc_complete, k = 3)
+
+
+hierarchical_profiles <- bind_rows(
+  profile_clusters(growth_rates_trim, ward_2, "Ward K=2"),
+  profile_clusters(growth_rates_trim, ward_3, "Ward K=3"),
+  profile_clusters(growth_rates_trim, single_2, "Single K=2"),
+  profile_clusters(growth_rates_trim, single_3, "Single K=3"),
+  profile_clusters(growth_rates_trim, complete_2, "Complete K=2"),
+  profile_clusters(growth_rates_trim, complete_3, "Complete K=3")
+)
+
+hierarchical_assignments <- bind_rows(
+  growth_features %>% mutate(method = "Ward, K=2", group = factor(ward_2)),
+  growth_features %>% mutate(method = "Single, K=2", group = factor(single_2)),
+  growth_features %>% mutate(method = "Complete, K=2", group = factor(complete_2))
+)
+plot_linkage <- ggplot(hierarchical_assignments,
+                       aes(Revenue_Growth_z, Cost_Growth_z, color = group)) +
+  geom_point(size = 2.4) +
+  facet_wrap(~ method) +
+  coord_equal() +
+  labs(title = "Linkage choices can change the two-cluster partition",
+       x = "Revenue Growth (z)", y = "Cost Growth (z)", color = "Group") +
+  theme_minimal(base_size = 12)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(hierarchical_profiles, digits = 2)
+plot_linkage
+```
+:::
+
+# Compare the Three Methods
+
+The baseline $K=2$ comparison uses the same 49 industries, the same two standardized features, and the same Euclidean distance matrix for partition-based diagnostics. For GMM, these diagnostics use the most-likely component only; posterior uncertainty is intentionally summarized separately.
+
+## Profiles, silhouette, and agreement
+
+::: {.callout-caution title="Task"}
+Compare the $K=2$ and $K=3$ partitions of K-means, GMM, and Ward. Report group sizes, average economic growth profiles, silhouette widths, and pairwise adjusted Rand indices (ARI). ARI equals 1 for identical partitions up to relabeling; values around 0 indicate approximately chance-level agreement under the adjustment's reference model.
+:::
+
+```{r}
+#| output: false
+fit_partitions <- list(
+  `K-means K=2` = km_2$cluster,
+  `GMM G=2` = gmm_2$classification,
+  `Ward K=2` = ward_2,
+  `K-means K=3` = km_3$cluster,
+  `GMM G=3` = gmm_3$classification,
+  `Ward K=3` = ward_3
+)
+
+partition_profiles <- bind_rows(lapply(names(fit_partitions), function(name) {
+  profile_clusters(growth_rates_trim, fit_partitions[[name]], name)
+}))
+
+silhouette_results <- bind_rows(lapply(names(fit_partitions), function(name) {
+  tibble(method = name,
+         average_silhouette = mean_silhouette(fit_partitions[[name]], growth_distance))
+}))
+
+ari_pairs <- function(names_of_methods) {
+  combos <- combn(names_of_methods, 2, simplify = FALSE)
+  bind_rows(lapply(combos, function(pair) {
+    tibble(method_1 = pair[[1]], method_2 = pair[[2]],
+           ARI = adjustedRandIndex(
+             fit_partitions[[pair[[1]]]], fit_partitions[[pair[[2]]]]))
+  }))
+}
+ari_results <- bind_rows(
+  ari_pairs(c("K-means K=2", "GMM G=2", "Ward K=2")) %>% mutate(groups = 2, .before = 1),
+  ari_pairs(c("K-means K=3", "GMM G=3", "Ward K=3")) %>% mutate(groups = 3, .before = 1)
+)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(partition_profiles, digits = 2)
+knitr::kable(silhouette_results, digits = 3)
+knitr::kable(ari_results, digits = 3)
+```
+:::
+
+
+::: {.callout-tip title="Question"}
+What does the average silhouette measure? Interpret the results across clustering methods and numbers of clusters.
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- The **silhouette score** measures how similar an observation is to its own cluster relative to its nearest alternative cluster. Scores range from -1 to +1:
+  - **Near +1:** The observation fits well within its assigned cluster and is well separated from other clusters.
+  - **Near 0:** The observation lies near the boundary between clusters.
+  - **Negative:** The observation is closer, on average, to another cluster than to its assigned cluster.
+- The **average silhouette** summarizes these scores across all industries. Higher values indicate more cohesive and better-separated clusters.
+- **K=2:** All three methods produce an average silhouette of 0.743, indicating relatively strong cluster separation.
+- **K=3:** K-means and GMM produce an average silhouette of 0.640, compared with 0.593 for Ward clustering.
+- **Conclusion:** The K=2 solutions exhibit better separation than the K=3 solutions. However, silhouette scores alone do not determine the optimal number of clusters.
+:::
+
+
+::: {.callout-tip title="Question"}
+What does the Adjusted Rand Index (ARI) measure? Interpret the results across clustering methods.
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- The **Adjusted Rand Index (ARI)** measures agreement between two clustering solutions by comparing whether pairs of industries are assigned to the same or different clusters. It adjusts for agreement expected by chance.
+  - **ARI = 1:** Perfect agreement; the methods assign industries to exactly the same groups, regardless of cluster labels.
+  - **ARI ≈ 0:** Agreement is approximately what would be expected by chance.
+  - **ARI < 0:** Agreement is worse than expected by chance.
+- **K=2:** All three methods have an ARI of 1.000, indicating identical industry assignments.
+- **K=3:** K-means and GMM still agree perfectly (ARI = 1.000). Ward clustering differs somewhat from both (ARI = 0.833), although agreement remains high.
+- **Conclusion:** The clustering methods produce identical partitions for K=2 and broadly similar partitions for K=3. This suggests that the main industry groupings are relatively robust to the choice of clustering algorithm.
+
+**Important distinction:** ARI measures *agreement between methods*, not clustering quality. Two methods can agree perfectly while producing poorly separated clusters.
+:::
+
+::: {.callout-caution title="Task"}
+Create scatter plots indicating cluster membership for 6 cases: K Means K=2 and K=3, GMM for G=2, G=3, and Hierarchical Ward K=2, K=3. 
+:::
+
+```{r}
+#| output: false
+
+compare_plot_data <- bind_rows(lapply(names(fit_partitions), function(name) {
+  growth_features %>% mutate(method = name, group = factor(fit_partitions[[name]]))
+}))
+plot_all_partitions <- ggplot(compare_plot_data,
+                              aes(Revenue_Growth_z, Cost_Growth_z, color = group)) +
+  geom_point(size = 1.9) +
+  facet_wrap(~ method, ncol = 3) +
+  coord_equal() +
+  labs(title = "Six partitions of one standardized feature space",
+       subtitle = "Group numbers are arbitrary across methods",
+       x = "Revenue Growth (z)", y = "Cost Growth (z)", color = "Group") +
+  theme_minimal(base_size = 11)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+
+plot_all_partitions
+```
+:::
+
+
+
+# Sensitivity to an Extreme Industry
+
+The baseline excludes `Industry07`, which has exceptionally high revenue and cost growth. We now add it back to evaluate whether the inferred structure changes. Importantly, this sensitivity exercise **recomputes the means and standard deviations on the full 50-industry sample**, following the original K-means lesson.
+
+::: {.callout-caution title="Task"}
+Re-standardize on all 50 industries. Refit $K=2$ K-means, a $G=2$ GMM, and a $K=2$ Ward tree. Record cluster sizes and determine the outlier's assignment. Compare assignments for the **49 common industries** with the baseline using ARI.
+:::
+
+```{r}
+#| output: false
+x_full_raw <- as.matrix(growth_rates[, c("Revenue_Growth", "Cost_Growth")])
+X_full <- scale(x_full_raw)
+rownames(X_full) <- growth_rates$Industry
+stopifnot(nrow(X_full) == 50)
+
+km_full_2 <- fit_kmeans(2, X_full)
+set.seed(4821)
+gmm_full_2 <- Mclust(X_full, G = 2, modelNames = c("EEE", "VVV"))
+stopifnot(!is.null(gmm_full_2))
+hc_full_ward <- hclust(dist(X_full), method = "ward.D2")
+ward_full_2 <- cutree(hc_full_ward, k = 2)
+
+full_partitions <- list(
+  `K-means` = km_full_2$cluster,
+  `GMM` = gmm_full_2$classification,
+  `Ward` = ward_full_2
+)
+baseline_partitions <- list(
+  `K-means` = km_2$cluster,
+  `GMM` = gmm_2$classification,
+  `Ward` = ward_2
+)
+common_indices <- match(growth_rates_trim$Industry, growth_rates$Industry)
+stopifnot(!anyNA(common_indices))
+outlier_index <- match("Industry07", growth_rates$Industry)
+
+sensitivity_summary <- bind_rows(lapply(names(full_partitions), function(name) {
+  all_labels <- full_partitions[[name]]
+  tibble(method = name,
+         baseline_cluster_sizes = paste(sort(as.integer(table(baseline_partitions[[name]]))), collapse = " / "),
+         full_cluster_sizes = paste(sort(as.integer(table(all_labels))), collapse = " / "),
+         Industry07_group = all_labels[outlier_index],
+         common_49_ARI = adjustedRandIndex(
+           baseline_partitions[[name]], all_labels[common_indices]))
+}))
+
+full_membership <- membership_table(gmm_full_2, growth_rates$Industry)
+uncertainty_change <- membership_2 %>%
+  select(Industry, baseline_uncertainty = uncertainty) %>%
+  left_join(full_membership %>% select(Industry, full_uncertainty = uncertainty), by = "Industry") %>%
+  mutate(absolute_change = abs(full_uncertainty - baseline_uncertainty)) %>%
+  arrange(desc(absolute_change))
+
+full_profiles <- bind_rows(lapply(names(full_partitions), function(name) {
+  profile_clusters(growth_rates, full_partitions[[name]], paste(name, "full sample"))
+}))
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#knitr::kable(sensitivity_summary, digits = 3)
+knitr::kable(full_profiles, digits = 2)
+#knitr::kable(full_membership %>% filter(Industry == "Industry07"), digits = 3)
+#knitr::kable(uncertainty_change %>% slice_head(n = 7), digits = 3)
+```
+:::
+
+
+::: {.callout-tip title="Question"}
+Comment on how including Industry07 influenced cluster structure. 
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+For each of the 3 methods we now have 1 cluster containing Industry07 and another containing all other industries. 
+:::
+
+
+::: {.callout-caution title="Task"}
+Plot the full-sample partitions and compare visually with the trimmed results. Discuss whether any method devotes a group primarily to the exceptional industry.
+:::
+
+```{r}
+#| output: false
+full_scatter <- tibble(
+  Industry = growth_rates$Industry,
+  Revenue_Growth_z = as.numeric(X_full[, 1]),
+  Cost_Growth_z = as.numeric(X_full[, 2])
+)
+full_plot_data <- bind_rows(lapply(names(full_partitions), function(name) {
+  full_scatter %>% mutate(method = name, group = factor(full_partitions[[name]]))
+}))
+plot_full_comparison <- ggplot(full_plot_data,
+                                aes(Revenue_Growth_z, Cost_Growth_z, color = group)) +
+  geom_point(size = 2) +
+  geom_text(data = subset(full_plot_data, Industry == "Industry07"),
+            aes(label = Industry), hjust = 1.05, vjust = -0.7, size = 3,
+            show.legend = FALSE) +
+  facet_wrap(~ method) +
+  coord_equal() +
+  labs(title = "Sensitivity: add the extreme-growth industry back",
+       subtitle = "All 50 observations are re-standardized on the full sample",
+       x = "Revenue Growth (z)", y = "Cost Growth (z)", color = "Group") +
+  theme_minimal(base_size = 12)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+plot_full_comparison
+```
+:::
+
+
+
+# Implications for Investment Analysis
+
+The objective of clustering is not to assign permanent names to industries. It is to propose useful representations of financial similarity that an investment manager can investigate further.
+
+::: {.callout-tip title="Question"}
+Suppose the portfolio manager wants (a) an easy-to-communicate partition, (b) a measure of ambiguous membership, and (c) the ability to investigate broader versus narrower groupings. Which method naturally addresses each need?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+(a) K-means provides a direct centroid-based partition. (b) A GMM provides model-based component membership probabilities. (c) Hierarchical clustering provides a dendrogram that can be cut at different levels. These outputs are complementary rather than interchangeable.
+:::
+
+::: {.callout-tip title="Question"}
+Would similar Revenue Growth and Cost Growth necessarily imply similar investment returns or diversification benefits for the corresponding industry ETFs?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+No. Fundamental operating similarity is not the same as return correlation or common exposure to priced risks. Clustering these two accounting growth measures could be useful for industry characterization or further research, but portfolio allocation conclusions would require separate evidence on ETF returns, risk, exposures, stability through time, and transaction costs.
+:::

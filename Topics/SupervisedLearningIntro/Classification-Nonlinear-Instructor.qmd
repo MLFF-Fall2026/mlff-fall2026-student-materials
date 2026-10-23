@@ -1,0 +1,2489 @@
+---
+title: "Nonlinear Classification"
+subtitle: "Machine Learning for Finance"
+author: Mike Aguilar
+format: html
+editor: visual
+toc: true
+toc-depth: 5
+toc-location: left
+embed-resources: true
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Housekeeping
+
+```{r}
+#| warning: false
+#| code-fold: true
+#| code-summary: "Code"
+
+cat("\014")  # clear the console when run interactively
+rm(list = ls())  # begin from a clean workspace
+
+if (!requireNamespace("here", quietly = TRUE)) {
+  stop("Install the 'here' package before rendering this document.")
+}
+
+suppressPackageStartupMessages(library(here))
+source(here("Supporting", "ProjectSetup.R"))
+
+# Packages used specifically for this lesson; ProjectSetup.R loads caret,
+# pROC, readxl, ggplot2, dplyr and the other course-wide dependencies.
+needed <- c("caret", "rpart", "rpart.plot", "class", "kernlab", "pROC")
+missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing) > 0) {
+  stop("Install these packages before rendering: ", paste(missing, collapse = ", "))
+}
+```
+
+# Background
+
+- Suppose you manage an actively selected equity portfolio.
+- You want to identify companies at elevated risk of experiencing a bad earnings quarter.
+- Financial ratios and sector information are available before the quarter you are trying to predict.
+- In the logistic regression lesson, the log-odds of bad earnings were modeled as an additive, linear function of predictors.
+- What if the relationship contains thresholds, interactions, or curves that we have not explicitly specified?
+- We will compare logistic regression with three alternatives: **CART**, **k-nearest neighbors (kNN)**, and an **RBF support vector machine (SVM)**.
+- We will keep the target, predictors, and held-out companies consistent so that differences in performance can be attributed to modeling approaches rather than different samples.
+
+::: {.callout-tip title="Question"}
+Does a classifier need to be nonlinear to capture a nonlinear relationship?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- No. Logistic regression can include squared terms, interactions, and threshold indicators.
+- The distinction is whether the analyst explicitly supplies those transformations or relies on the learning algorithm to discover a flexible classification rule.
+- We begin with *additive* logistic regression as the benchmark.
+:::
+
+# Data
+
+## Acquisition
+
+::: {.callout-caution collapse="false" title="Task"}
+Load the data dictionary from the `Data_Dictionary` sheet of `earnings_ratio_data_nonlinear.xlsx`.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+data_file <- here("data", "earnings_ratio_data_nonlinear.xlsx")
+if (!file.exists(data_file)) {
+  stop("Place earnings_ratio_data_nonlinear.xlsx in the project's data/ folder.")
+}
+
+data_dictionary <- readxl::read_excel(data_file, sheet = "Data_Dictionary")
+knitr::kable(data_dictionary)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(data_dictionary)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Which financial relationships might be nonlinear, rather than proportional over the full range of a ratio?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Extremely low operating margins may indicate distress.
+- High asset turnover may be particularly valuable when profit margins are healthy.
+- Extreme valuation ratios may have different implications from ordinary multiples.
+- These are hypotheses to investigate, not established relationships for every company.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Load the `Data` worksheet and inspect its structure.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+earnings_data <- readxl::read_excel(data_file, sheet = "Data")
+dplyr::glimpse(earnings_data)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+dplyr::glimpse(earnings_data)
+```
+:::
+
+## Clean
+
+::: {.callout-caution collapse="false" title="Task"}
+Determine the dimensions of the dataset, confirm unique company identifiers, and count missing values.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+dim(earnings_data)
+
+earnings_data %>%
+  summarise(
+    Rows = n(),
+    Unique_Companies = n_distinct(Company_ID),
+    Duplicate_Companies = Rows - Unique_Companies,
+    Missing_Cells = sum(is.na(earnings_data)),
+    Companies_With_Missing = sum(!complete.cases(earnings_data))
+  ) %>% knitr::kable()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+dim(earnings_data)
+
+earnings_data %>%
+  summarise(
+    Rows = n(),
+    Unique_Companies = n_distinct(Company_ID),
+    Duplicate_Companies = Rows - Unique_Companies,
+    Missing_Cells = sum(is.na(earnings_data)),
+    Companies_With_Missing = sum(!complete.cases(earnings_data))
+  ) %>% knitr::kable()
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Preserve the original data and drop observations with missing values, just as in the logistic lesson.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+earnings_data_raw <- earnings_data
+
+earnings_data <- earnings_data %>%
+  filter(if_all(everything(), ~ !is.na(.x)))
+
+dim(earnings_data)
+stopifnot(!anyDuplicated(earnings_data$Company_ID))
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+dim(earnings_data)
+```
+:::
+
+
+
+## Split the Sample
+
+::: {.callout-tip title="Question"}
+Why must we keep the same test companies for all four classifiers?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Otherwise, differences in test performance could reflect differences in sample difficulty.
+- The held-out test set must also remain independent of hyperparameter selection, feature preprocessing, probability calibration, and threshold selection.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Randomly assign 80% of companies to training and 20% to testing. Use the same company-level splitting convention as the logistic lesson.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+set.seed(123)
+train_companies <- earnings_data %>%
+  distinct(Company_ID) %>%
+  slice_sample(prop = 0.80) %>%
+  pull(Company_ID)
+
+train_data_raw <- earnings_data %>%
+  filter(Company_ID %in% train_companies)
+
+test_data_raw <- earnings_data %>%
+  filter(!Company_ID %in% train_companies)
+
+knitr::kable(tibble(
+  Sample = c("Training", "Test"),
+  Rows = c(nrow(train_data_raw), nrow(test_data_raw)),
+  Companies = c(n_distinct(train_data_raw$Company_ID),
+                n_distinct(test_data_raw$Company_ID))
+))
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(tibble(
+  Sample = c("Training", "Test"),
+  Rows = c(nrow(train_data_raw), nrow(test_data_raw)),
+  Companies = c(n_distinct(train_data_raw$Company_ID),
+                n_distinct(test_data_raw$Company_ID))
+))
+```
+:::
+
+## Define “Bad” Earnings
+
+::: {.callout-tip title="Question"}
+Why define the earnings-growth cutoff using only the training sample?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- The target definition is a data-dependent choice.
+- Using the test-sample earnings distribution to choose that cutoff would reveal information about the holdout data during model development.
+- We therefore freeze the training-sample cutoff and apply it unchanged to both samples.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Plot the training-sample distribution of quarterly earnings growth.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+ggplot(train_data_raw, aes(x = Quarterly_Earnings_Growth)) +
+  geom_histogram(bins = 35, fill = "steelblue", color = "white") +
+  labs(title = "Training-Sample Earnings Growth",
+       x = "Quarterly Earnings Growth", y = "Companies") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(train_data_raw, aes(x = Quarterly_Earnings_Growth)) +
+  geom_histogram(bins = 35, fill = "steelblue", color = "white") +
+  labs(title = "Training-Sample Earnings Growth",
+       x = "Quarterly Earnings Growth", y = "Companies") +
+  theme_minimal()
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Create a parameter list containing the lower-tail quantile, the observed earnings-growth cutoff, and the original logistic lesson's 65% classification-probability threshold.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+params <- list(
+  bad_quantile = 0.15,
+  bad_threshold = as.numeric(quantile(
+    train_data_raw$Quarterly_Earnings_Growth, probs = 0.15
+  )),
+  prob_threshold = 0.65
+)
+params
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+params
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Create `Bad_Earnings` in both samples and tabulate the class percentages.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+train_data_raw <- train_data_raw %>%
+  mutate(Bad_Earnings = as.integer(
+    Quarterly_Earnings_Growth <= params$bad_threshold
+  ))
+
+test_data_raw <- test_data_raw %>%
+  mutate(Bad_Earnings = as.integer(
+    Quarterly_Earnings_Growth <= params$bad_threshold
+  ))
+
+bind_rows(
+  train_data_raw %>% mutate(Sample = "Training"),
+  test_data_raw %>% mutate(Sample = "Test")
+) %>%
+  dplyr::count(Sample, Bad_Earnings, name = "Companies") %>%
+  group_by(Sample) %>%
+  mutate(Percent = Companies / sum(Companies)) %>%
+  ungroup() %>%
+  knitr::kable(digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+bind_rows(
+  train_data_raw %>% mutate(Sample = "Training"),
+  test_data_raw %>% mutate(Sample = "Test")
+) %>%
+  dplyr::count(Sample, Bad_Earnings, name = "Companies") %>%
+  group_by(Sample) %>%
+  mutate(Percent = Companies / sum(Companies)) %>%
+  ungroup() %>%
+  knitr::kable(digits = 3)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Must exactly 15% of the test companies have bad earnings?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- No. The threshold is set using training observations.
+- Applying that fixed cutoff to a new sample does not guarantee the same event prevalence.
+:::
+
+::: {.callout-tip title="Question"}
+What is the difference between `bad_threshold` and `prob_threshold`?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+| Parameter | Cutoff on | Determines |
+|---|---|---|
+| `bad_threshold` | *Observed quarterly earnings growth* | The actual class label |
+| `prob_threshold` | *Predicted probability* | The model's predicted class |
+
+- Changing only the probability cutoff does not require refitting the model.
+:::
+
+## Select and Standardize the Predictors
+
+::: {.callout-caution collapse="false" title="Task"}
+Identify predictors, excluding company identifiers, the observed earnings-growth outcome, and the derived classification target.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+excluded_names <- c("Company_ID", "Quarterly_Earnings_Growth", "Bad_Earnings")
+feature_names <- setdiff(names(train_data_raw), excluded_names)
+numeric_feature_names <- names(train_data_raw %>%
+  select(all_of(feature_names)) %>% select(where(is.numeric)))
+categorical_feature_names <- setdiff(feature_names, numeric_feature_names)
+
+feature_names
+numeric_feature_names
+categorical_feature_names
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+feature_names
+numeric_feature_names
+categorical_feature_names
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Encode sector using only training-sample categories. Produce identical numeric predictor columns for the training and test data.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+# The encoder is learned from training data only. With fullRank = TRUE,
+# sector is represented by nonredundant indicator columns.
+sector_encoder <- caret::dummyVars(
+  ~ ., data = train_data_raw[, feature_names], fullRank = TRUE
+)
+
+train_x <- as.data.frame(predict(
+  sector_encoder, newdata = train_data_raw[, feature_names]
+))
+test_x <- as.data.frame(predict(
+  sector_encoder, newdata = test_data_raw[, feature_names]
+))
+
+# Use valid, unique names for downstream formula-based models (e.g., rpart).
+encoded_names <- make.names(names(train_x), unique = TRUE)
+names(train_x) <- encoded_names
+names(test_x) <- encoded_names
+
+stopifnot(identical(names(train_x), names(test_x)))
+stopifnot(!anyNA(train_x), !anyNA(test_x))
+
+knitr::kable(tibble(Encoded_Predictors = names(train_x)))
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(tibble(Encoded_Predictors = names(train_x)))
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Establish class labels. Explicitly put `Bad` first so the ROC tuning function treats bad earnings as the "positive" event.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+train_y <- factor(
+  ifelse(train_data_raw$Bad_Earnings == 1, "Bad", "Good"),
+  levels = c("Bad", "Good")
+)
+test_y <- factor(
+  ifelse(test_data_raw$Bad_Earnings == 1, "Bad", "Good"),
+  levels = c("Bad", "Good")
+)
+
+levels(train_y)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+levels(train_y)
+```
+:::
+
+We standardized predictors in the logistic lesson using training means and standard deviations. Here, **the model-fitting workflow performs centering and scaling inside each cross-validation training fold**. At the final fit, it learns the transformation from the entire training sample and applies it to the test sample. This prevents a validation fold's values from influencing its own scaling parameters.
+
+::: {.callout-tip title="Question"}
+Why is scaling especially important for kNN and the (RBF) SVM?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Both algorithms depend on distances between observations. Without scaling, features measured on larger numerical scales can dominate distance calculations.
+- Continuous features are typically standardized; dummy variables are often left as 0/1.
+- Standardizing dummy variables changes their relative influence, giving greater weight to differences involving rare categories.
+- CART's axis-aligned splits are effectively unchanged by positive linear rescaling of a feature.
+:::
+
+# Exploratory Data Analysis
+
+## Target Variable
+
+::: {.callout-caution collapse="false" title="Task"}
+Plot the training-sample counts for good and bad earnings.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+train_data_raw %>%
+  mutate(Class = ifelse(Bad_Earnings == 1, "Bad", "Good")) %>%
+  ggplot(aes(x = Class, fill = Class)) +
+  geom_bar() +
+  scale_fill_manual(values = c(Bad = "firebrick", Good = "steelblue")) +
+  labs(title = "Earnings Classification: Training Sample", y = "Companies") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+train_data_raw %>%
+  mutate(Class = ifelse(Bad_Earnings == 1, "Bad", "Good")) %>%
+  ggplot(aes(x = Class, fill = Class)) +
+  geom_bar() +
+  scale_fill_manual(values = c(Bad = "firebrick", Good = "steelblue")) +
+  labs(title = "Earnings Classification: Training Sample", y = "Companies") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+:::
+
+::: {.callout-tip title="Question"}
+Why might accuracy be misleading for this classification problem?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Bad earnings occur in only about 15% of companies.
+- A classifier that predicts good earnings for every company could attain roughly 85% accuracy while detecting none of the bad earnings observations.
+- We must also examine sensitivity, precision, F1, and ranking metrics.
+:::
+
+## Predictors
+
+::: {.callout-caution collapse="false" title="Task"}
+Plot the correlations among the 15 numeric financial ratios in the training sample.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+correlations <- cor(train_data_raw[, numeric_feature_names])
+corrplot::corrplot(correlations, method = "color", type = "upper",
+                   tl.cex = 0.65, tl.col = "black")
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+corrplot::corrplot(correlations, method = "color", type = "upper",
+                   tl.cex = 0.65, tl.col = "black")
+```
+:::
+
+::: {.callout-tip title="Question"}
+What might strong correlations among the ratios imply for kNN?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Euclidean distance may count related information repeatedly.
+- Closest companies in a 15-dimensional, correlated financial-ratio space need not be closest in economically meaningful risk characteristics.
+- kNN does not automatically remove redundancy.
+- For example, P/E and P/B are highly correlated in our data, so kNN may effectively give disproportionate weight to valuation when calculating distances between companies.
+:::
+
+## Look for Nonlinear Relationships
+
+::: {.callout-caution collapse="false" title="Task"}
+Divide operating margin into training-sample quantile bins and plot the share of companies with bad earnings in each bin.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+margin_bins <- train_data_raw %>%
+  mutate(Bin = ntile(OpMargin, 12)) %>%
+  group_by(Bin) %>%
+  summarise(
+    OpMargin_Mean = mean(OpMargin),
+    Bad_Rate = mean(Bad_Earnings),
+    Companies = n(), .groups = "drop"
+  )
+
+ggplot(margin_bins, aes(x = OpMargin_Mean, y = Bad_Rate)) +
+  geom_line(color = "steelblue") +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Bad Earnings Rate by Operating Margin",
+       x = "Average Operating Margin Within Bin",
+       y = "Observed Bad Earnings Rate") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(margin_bins, aes(x = OpMargin_Mean, y = Bad_Rate)) +
+  geom_line(color = "steelblue") +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Bad Earnings Rate by Operating Margin",
+       x = "Average Operating Margin Within Bin",
+       y = "Observed Bad Earnings Rate") +
+  theme_minimal()
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Repeat this analysis for EV/EBITDA.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+valuation_bins <- train_data_raw %>%
+  mutate(Bin = ntile(EV_EBITDA, 12)) %>%
+  group_by(Bin) %>%
+  summarise(
+    EV_EBITDA_Mean = mean(EV_EBITDA),
+    Bad_Rate = mean(Bad_Earnings),
+    Companies = n(), .groups = "drop"
+  )
+
+ggplot(valuation_bins, aes(EV_EBITDA_Mean, Bad_Rate)) +
+  geom_line(color = "steelblue") +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Bad Earnings Rate by EV/EBITDA",
+       x = "Average EV/EBITDA Within Bin", y = "Observed Bad Earnings Rate") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(valuation_bins, aes(EV_EBITDA_Mean, Bad_Rate)) +
+  geom_line(color = "steelblue") +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Bad Earnings Rate by EV/EBITDA",
+       x = "Average EV/EBITDA Within Bin", y = "Observed Bad Earnings Rate") +
+  theme_minimal()
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Investigate whether profitability and asset efficiency jointly relate to bad earnings. Divide GPM and AssetTurn into five groups each, then display the bad-earnings rate within each group combination.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+interaction_bins <- train_data_raw %>%
+  mutate(GPM_Group = ntile(GPM, 5),
+         AssetTurn_Group = ntile(AssetTurn, 5)) %>%
+  group_by(GPM_Group, AssetTurn_Group) %>%
+  summarise(Bad_Rate = mean(Bad_Earnings),
+            Companies = n(), .groups = "drop")
+
+ggplot(interaction_bins,
+       aes(x = GPM_Group, y = AssetTurn_Group, fill = Bad_Rate)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = scales::percent(Bad_Rate, accuracy = 1)), size = 3) +
+  scale_fill_gradient(low = "white", high = "firebrick",
+                      labels = scales::percent_format()) +
+  scale_x_continuous(breaks = 1:5) +
+  scale_y_continuous(breaks = 1:5) +
+  labs(title = "Joint Profitability and Efficiency: Bad Earnings Rate",
+       x = "GPM Quintile (Low to High)",
+       y = "AssetTurn Quintile (Low to High)", fill = "Bad Rate") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(interaction_bins,
+       aes(x = GPM_Group, y = AssetTurn_Group, fill = Bad_Rate)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = scales::percent(Bad_Rate, accuracy = 1)), size = 3) +
+  scale_fill_gradient(low = "white", high = "firebrick",
+                      labels = scales::percent_format()) +
+  scale_x_continuous(breaks = 1:5) +
+  scale_y_continuous(breaks = 1:5) +
+  labs(title = "Joint Profitability and Efficiency: Bad Earnings Rate",
+       x = "GPM Quintile (Low to High)",
+       y = "AssetTurn Quintile (Low to High)", fill = "Bad Rate") +
+  theme_minimal()
+```
+:::
+
+::: {.callout-tip title="Question"}
+Do these plots establish the precise functional form of the true relationship?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Bad earnings are less prevalent among companies with high Operating Margins and high GPM, particularly when GPM is combined with moderate-to-high Asset Turnover. The relationship with EV/EBITDA is less systematic.
+- However, these plots do not establish the true functional relationships. They are exploratory descriptions of observed conditional averages.
+- Binning, correlated predictors, and noise can obscure or exaggerate patterns.
+- We should assess whether flexible models actually generalize to unseen companies.
+:::
+
+# Modeling
+
+## Metrics and Cross-Validation
+
+::: {.callout-caution collapse="false" title="Task"}
+Define a confusion matrix and classification-metric function, using rows for actual classes and columns for predicted classes.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+classification_metrics <- function(actual, predicted) {
+  confusion <- table(
+    Actual = factor(actual, levels = c(0, 1)),
+    Predicted = factor(predicted, levels = c(0, 1))
+  )
+
+  TN <- as.numeric(confusion["0", "0"])
+  FP <- as.numeric(confusion["0", "1"])
+  FN <- as.numeric(confusion["1", "0"])
+  TP <- as.numeric(confusion["1", "1"])
+
+  safe_ratio <- function(a, b) if (b == 0) NA_real_ else a / b
+  precision <- safe_ratio(TP, TP + FP)
+  sensitivity <- safe_ratio(TP, TP + FN)
+  f1 <- if (is.na(precision) || is.na(sensitivity)) NA_real_ else
+    if (precision + sensitivity == 0) 0 else
+      2 * precision * sensitivity / (precision + sensitivity)
+
+  tibble(
+    Metric = c("Accuracy", "Precision", "Sensitivity (Recall)",
+               "Specificity", "False Positive Rate (Type I)",
+               "False Negative Rate (Type II)", "F1"),
+    Value = c(safe_ratio(TP + TN, TP + TN + FP + FN),
+              precision, sensitivity, safe_ratio(TN, TN + FP),
+              safe_ratio(FP, FP + TN), safe_ratio(FN, FN + TP), f1)
+  )
+}
+
+get_metric <- function(metrics, metric) {
+  metrics %>% filter(Metric == metric) %>% pull(Value)
+}
+
+as_class <- function(prob, threshold) as.integer(prob >= threshold)
+
+prob_metrics <- function(actual, prob, threshold) {
+  classification_metrics(actual, as_class(prob, threshold))
+}
+
+bad_probability <- function(model, new_x) {
+  as.numeric(predict(model, newdata = new_x, type = "prob")[, "Bad"])
+}
+
+roc_object <- function(actual, prob) {
+  pROC::roc(
+    response = factor(ifelse(actual == 1, "Bad", "Good"),
+                      levels = c("Good", "Bad")),
+    predictor = prob,
+    levels = c("Good", "Bad"), direction = "<", quiet = TRUE
+  )
+}
+
+get_auc <- function(actual, prob) as.numeric(pROC::auc(roc_object(actual, prob)))
+
+format_rate <- function(x) {
+  if (length(x) == 0 || is.na(x)) "undefined" else
+    scales::percent(x, accuracy = 0.1)
+}
+```
+
+::: {.callout-tip title="Question"}
+What do sensitivity and precision measure for this portfolio manager?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+| Metric | Definition | Emphasizes |
+|---|---|---|
+| **Sensitivity** | Share of companies that actually have bad earnings which the classifier identifies as bad | Missed risky companies |
+| **Precision** | Share of companies flagged as bad that actually have bad earnings | Unnecessary flags |
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Create five reproducible cross-validation folds, using identical folds for logistic regression, CART, kNN, and SVM. Select hyperparameters using ROC AUC rather than the initially arbitrary 65% probability threshold.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+set.seed(2026)
+cv_indices <- caret::createFolds(train_y, k = 5, returnTrain = TRUE)
+
+cv_control <- caret::trainControl(
+  method = "cv", number = 5,
+  index = cv_indices,
+  classProbs = TRUE,
+  summaryFunction = caret::twoClassSummary,
+  savePredictions = "final",
+  allowParallel = FALSE
+)
+```
+
+**Note:** With two-class ROC tuning in `caret`, the *first* outcome level is the positive class. Here that level is explicitly `Bad`. Centering and scaling through `preProcess` are learned inside each training fold; the final fitted model learns them from all training observations.
+
+::: {.callout-tip title="Question"}
+Why optimize cross-validated AUC rather than accuracy for hyperparameter tuning?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- AUC evaluates ranking ability across thresholds and is less vulnerable to the trivial all-good prediction that looks accurate when bad earnings are uncommon.
+- AUC does not, however, measure probability calibration or reflect a particular investor's costs.
+:::
+
+## Logistic Regression Benchmark
+
+### Estimate
+
+::: {.callout-caution collapse="false" title="Task"}
+Fit an additive logistic regression on *all* available predictors. Use the common cross-validation folds and training-only preprocessing.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+set.seed(2026)
+logit_fit <- caret::train(
+  x = train_x, y = train_y,
+  method = "glm", family = binomial(),
+  trControl = cv_control, metric = "ROC",
+  preProcess = c("center", "scale")
+)
+
+logit_fit
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+logit_fit
+```
+:::
+
+### Interpret
+
+::: {.callout-tip title="Question"}
+Which types of relationships cannot be captured by this additive specification unless we create additional features?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Abrupt thresholds, interactions among ratios, and smooth nonlinear effects that do not align with the additive log-odds model.
+- Logistic regression can capture these phenomena if we explicitly construct suitable transformed features.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Display the cross-validated AUC of the logistic benchmark.  Also display the std deviation of the ROC across resampling iterations. 
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+knitr::kable(logit_fit$results[, c("ROC", "ROCSD")], digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(logit_fit$results[, c("ROC", "ROCSD")], digits = 3)
+```
+:::
+
+### Set a Training-Based Probability Threshold
+
+The original logistic lesson used a 65% probability cutoff. For a 15%-prevalence event this may classify almost every company as good. Before examining test outcomes, we will also select **one common, training-based comparison threshold**.
+
+::: {.callout-caution collapse="false" title="Task"}
+Use out-of-fold logistic predictions to calculate F1 at several thresholds. 
+
+Out-of-fold: These are predictions for observations that were omitted from the fold used to fit their logistic model.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+logit_oof <- logit_fit$pred
+threshold_candidates <- seq(0.05, 0.85, by = 0.025)
+
+logit_threshold_curve <- purrr::map_dfr(threshold_candidates, function(t) {
+  m <- prob_metrics(as.integer(logit_oof$obs == "Bad"), logit_oof$Bad, t)
+  tibble(Threshold = t,
+         F1 = get_metric(m, "F1"),
+         Sensitivity = get_metric(m, "Sensitivity (Recall)"),
+         Precision = get_metric(m, "Precision"))
+})
+
+ggplot(logit_threshold_curve,
+       aes(x = Threshold, y = F1)) +
+  geom_line(color = "steelblue") +
+  geom_point(size = 1.7) +
+  geom_vline(xintercept = params$prob_threshold,
+             linetype = "dashed", color = "firebrick") +
+  labs(title = "Out-of-Fold Logistic F1 by Probability Threshold",
+       x = "Probability Threshold", y = "F1") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(logit_threshold_curve,
+       aes(x = Threshold, y = F1)) +
+  geom_line(color = "steelblue") +
+  geom_point(size = 1.7) +
+  geom_vline(xintercept = params$prob_threshold,
+             linetype = "dashed", color = "firebrick") +
+  labs(title = "Out-of-Fold Logistic F1 by Probability Threshold",
+       x = "Probability Threshold", y = "F1") +
+  theme_minimal()
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Select the threshold with the largest out-of-fold logistic F1, and freeze it for the remainder of the *common-threshold* comparisons. Ties go to the lower threshold.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+params$comparison_threshold <- logit_threshold_curve %>%
+  mutate(F1_for_order = ifelse(is.na(F1), -Inf, F1)) %>%
+  arrange(desc(F1_for_order), Threshold) %>%
+  slice(1) %>%
+  pull(Threshold)
+
+params$comparison_threshold
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+params$comparison_threshold
+```
+:::
+
+::: {.callout-tip title="Question"}
+Does selecting this threshold guarantee that it maximizes F1 for CART, kNN, and SVM?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- A threshold of roughly 0.25 means that firms with predicted probabilities of bad earnings of at least 25% are classified as having bad earnings.
+- This threshold was selected to maximize F1 for logistic regression. F1 balances recall (correctly identifying bad earnings) and precision (avoiding false alarms).
+- No. The threshold was selected using logistic regression predictions and held constant across models for comparison. It need not maximize F1 for CART, kNN, or SVM.
+- Different models may produce differently calibrated probabilities, so their optimal thresholds may differ.
+- In practice, we would select thresholds using validation data and the economic costs of classification errors, rather than relying solely on F1.
+:::
+
+### Predict and Classify
+
+::: {.callout-caution collapse="false" title="Task"}
+Obtain the logistic regression's test-sample probabilities and class predictions using both the original 65% threshold and the common training-selected threshold.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+logit_prob <- bad_probability(logit_fit, test_x)
+
+logit_predictions <- tibble(
+  Company_ID = test_data_raw$Company_ID,
+  Actual = test_data_raw$Bad_Earnings,
+  Probability_Bad = logit_prob,
+  Predicted_65 = as_class(logit_prob, params$prob_threshold),
+  Predicted_Common = as_class(logit_prob, params$comparison_threshold)
+)
+
+knitr::kable(head(logit_predictions, 8), digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(head(logit_predictions, 8), digits = 3)
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Construct its common-threshold confusion matrix and evaluation metrics.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+logit_confusion <- table(
+  Actual = factor(test_data_raw$Bad_Earnings, levels = c(0, 1)),
+  Predicted = factor(logit_predictions$Predicted_Common, levels = c(0, 1))
+)
+logit_confusion
+
+logit_metrics <- prob_metrics(
+  test_data_raw$Bad_Earnings, logit_prob, params$comparison_threshold
+)
+knitr::kable(logit_metrics, digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+logit_confusion
+knitr::kable(logit_metrics, digits = 3)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Interpret each metric. 
+:::
+::: {.callout-note collapse="true" title="Answer"}
+- Accuracy (80.6%): The model correctly classifies 80.6% of companies as having either bad or good earnings.
+- Precision (31.9%): Among companies predicted to have bad earnings, only 31.9% actually have bad earnings.
+- Sensitivity / Recall (56.6%): The model correctly identifies 56.6% of companies that actually have bad earnings.
+- Specificity (83.8%): The model correctly identifies 83.8% of companies that actually have good earnings.
+- False Positive Rate / Type I Error (16.2%): Among companies with good earnings, 16.2% are incorrectly classified as having bad earnings.
+- False Negative Rate / Type II Error (43.4%): Among companies with bad earnings, 43.4% are incorrectly classified as having good earnings.
+- F1 (0.408): The harmonic mean of precision and recall is 0.408, reflecting the model's relatively weak ability to identify bad earnings without generating many false alarms.
+
+Takeaway: Although accuracy is relatively high (80.6%), the model misses 43.4% of companies with bad earnings, and most predicted bad-earnings cases are false alarms. Accuracy alone therefore overstates the model's usefulness for identifying companies at risk of bad earnings.
+
+:::
+
+
+
+## Classification Trees (CART)
+
+### Motivation
+
+CART recursively partitions companies into groups by selecting a financial ratio and a split threshold. Each terminal node contains a group of similar training observations and an estimated bad-earnings rate.
+
+The tree's probability is *piecewise constant*: all companies landing in the same terminal node receive the same estimated class probability. CART can discover thresholds and conditional interactions without the analyst manually specifying squared or interaction terms.
+
+::: {.callout-tip title="Question"}
+Suppose a tree first splits on operating margin and then, among low-margin companies, splits on asset turnover. What does the second split imply?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Asset turnover matters differently within the low-operating-margin subgroup.
+- This is a form of interaction discovered through sequential, conditional splitting.
+:::
+
+### Estimate
+
+
+::: {.callout-caution collapse="false" title="Task"}
+Fit a classification tree (`rpart`) to predict whether a company will experience bad earnings. Use the training data (`train_x` and `train_y`) and the following settings to produce a relatively simple, interpretable tree:
+
+- `method = "class"`: Fit a classification tree rather than a regression tree.
+- `maxdepth = 3`: Limit the tree to at most three splits along any path from the root to a terminal node.
+- `minsplit = 40`: Require at least 40 observations in a node before the algorithm attempts to split it.
+- `cp = 0.005`: Set the complexity parameter, which discourages splits that produce only small improvements in the tree's fit.
+- `xval = 0`: Disable `rpart`'s internal cross-validation, since we will perform model tuning separately.
+
+These settings deliberately restrict the tree's complexity to make its decision rules easier to interpret. **They are not necessarily optimal for prediction.** We will subsequently tune tree complexity using cross-validation.
+:::
+
+
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+tree_example <- rpart::rpart(
+  Class ~ .,
+  data = bind_cols(tibble(Class = train_y), train_x),
+  method = "class",
+  control = rpart::rpart.control(maxdepth = 3, minsplit = 40,
+                                 cp = 0.005, xval = 0)
+)
+
+rpart.plot::rpart.plot(
+  tree_example, type = 2, extra = 104,
+  under = TRUE, fallen.leaves = TRUE,
+  main = "A Shallow Classification Tree"
+)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+rpart.plot::rpart.plot(
+  tree_example, type = 2, extra = 104,
+  under = TRUE, fallen.leaves = TRUE,
+  main = "A Shallow Classification Tree"
+)
+```
+:::
+
+At every split, follow the left branch if the stated condition is true and the right branch if it is false. Continue until reaching a terminal node, which reports the predicted class, estimated class probabilities, and percentage of training observations.
+
+Note: The tree displays its default predicted classes,
+based on the majority class within each terminal node
+(equivalent to a 50% probability threshold here).
+
+
+
+::: {.callout-tip title="Question"}
+Interpret the classification tree:
+
+1. Why is the root node labeled "Good"? What do the numbers 0.15, 0.85, and 100% represent?
+2. Consider a company with `OpMargin < 0.041`, `EBITDA_Margin < 0.063`, and `WCTurn >= 5.3`. What does the tree predict? Interpret the probabilities and percentage in its terminal node.
+3. How do the predicted probabilities from a classification tree differ from those of logistic regression?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+1. **Root node:** The tree initially predicts "Good" because 85% of training companies have good earnings, versus 15% with bad earnings. The 100% indicates that all training companies begin at this node. Although "Bad" is our positive class, it is not the majority class.
+
+2. **Terminal node:** Following the three splits leads to a terminal node labeled "Bad".
+   - The estimated probability of bad earnings is 0.75 (75%), versus 0.25 (25%) for good earnings.
+   - The 3% indicates that approximately 3% of training companies satisfy these conditions.
+   - The tree therefore classifies the company as "Bad".
+
+3. **Comparison with logistic regression:** A classification tree estimates probabilities using the proportion of training observations in each terminal node. Every company reaching the same leaf receives the same predicted probabilities. In contrast, logistic regression produces probabilities that vary smoothly with the predictors. Neither approach guarantees well-calibrated probabilities.
+:::
+
+
+
+### Hyperparameter Tuning
+
+::: {.callout-caution collapse="false" title="Task"}
+Compare candidate values of the cost-complexity parameter `cp`. Smaller `cp` permits more detailed trees; larger `cp` penalizes additional splitting.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+tree_grid <- expand.grid(cp = c(0.0005, 0.002, 0.005, 0.01, 0.02, 0.05))
+
+set.seed(2026)
+tree_fit <- caret::train(
+  x = train_x, y = train_y,
+  method = "rpart", tuneGrid = tree_grid,
+  trControl = cv_control, metric = "ROC",
+  preProcess = c("center", "scale")
+)
+
+knitr::kable(tree_fit$results[, c("cp", "ROC", "ROCSD")], digits = 3)
+tree_fit$bestTune
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(tree_fit$results[, c("cp", "ROC", "ROCSD")], digits = 3)
+tree_fit$bestTune
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Compare training AUC with out-of-fold AUC over the complexity grid. The training scores are deliberately *in-sample* and therefore optimistic.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+tree_train_curve <- purrr::map_dfr(tree_grid$cp, function(cp_value) {
+  fit <- rpart::rpart(
+    Class ~ ., data = bind_cols(tibble(Class = train_y), train_x),
+    method = "class",
+    control = rpart::rpart.control(cp = cp_value, xval = 0)
+  )
+  p <- as.numeric(predict(fit, newdata = train_x, type = "prob")[, "Bad"])
+  tibble(cp = cp_value, Train_AUC = get_auc(train_data_raw$Bad_Earnings, p))
+})
+
+tree_curve <- tree_fit$results %>%
+  select(cp, CV_AUC = ROC) %>%
+  left_join(tree_train_curve, by = "cp") %>%
+  pivot_longer(c(CV_AUC, Train_AUC),
+               names_to = "Sample", values_to = "AUC")
+
+ggplot(tree_curve, aes(x = cp, y = AUC, color = Sample)) +
+  geom_line() + geom_point() +
+  scale_x_log10() +
+  labs(title = "Tree Complexity: In-Sample versus Cross-Validated AUC",
+       x = "Cost-Complexity Parameter (cp)", y = "ROC AUC") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(tree_curve, aes(x = cp, y = AUC, color = Sample)) +
+  geom_line() + geom_point() +
+  scale_x_log10() +
+  labs(title = "Tree Complexity: In-Sample versus Cross-Validated AUC",
+       x = "Cost-Complexity Parameter (cp)", y = "ROC AUC") +
+  theme_minimal()
+```
+:::
+
+
+::: {.callout-tip title="Question"}
+How does tree complexity affect in-sample and cross-validated performance? What value of `cp` would you prefer?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Low `cp`: More complex trees achieve high training AUC (~0.91), but much lower cross-validated AUC (~0.77), suggesting overfitting.
+- Moderate `cp`: Simpler trees achieve nearly the same cross-validated AUC despite substantially lower training AUC. The additional complexity offers little apparent predictive benefit.
+- High `cp`: Excessive pruning produces an overly simple tree with AUC near 0.50, indicating underfitting.
+- Model selection: Although the lowest `cp` achieves the highest cross-validated AUC, a moderately larger value (e.g., `cp = 0.005`) provides nearly equivalent performance with a simpler, more interpretable tree.
+
+Takeaway: We should choose tree complexity based on cross-validated performance, not training performance. More complex trees do not necessarily generalize better.
+:::
+
+
+::: {.callout-caution collapse="false" title="Task"}
+Plot the tree selected by cross-validation.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+rpart.plot::rpart.plot(
+  tree_fit$finalModel, type = 2, extra = 104,
+  under = TRUE, fallen.leaves = TRUE,
+  main = "Cross-Validated CART Model"
+)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+rpart.plot::rpart.plot(
+  tree_fit$finalModel, type = 2, extra = 104,
+  under = TRUE, fallen.leaves = TRUE,
+  main = "Cross-Validated CART Model"
+)
+```
+:::
+
+### Predict
+
+::: {.callout-caution collapse="false" title="Task"}
+Generate CART's estimated bad-earnings probabilities for the test companies.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+tree_prob <- bad_probability(tree_fit, test_x)
+knitr::kable(head(tibble(
+  Company_ID = test_data_raw$Company_ID,
+  CART_Probability_Bad = tree_prob
+), 8), digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(head(tibble(
+  Company_ID = test_data_raw$Company_ID,
+  CART_Probability_Bad = tree_prob
+), 8), digits = 3)
+```
+:::
+
+### Classify
+
+::: {.callout-caution collapse="false" title="Task"}
+Convert probabilities into predicted classes at the common threshold, then produce the confusion matrix.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+tree_prediction <- as_class(tree_prob, params$comparison_threshold)
+table(
+  Actual = factor(test_data_raw$Bad_Earnings, levels = c(0, 1)),
+  Predicted = factor(tree_prediction, levels = c(0, 1))
+)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+table(
+  Actual = factor(test_data_raw$Bad_Earnings, levels = c(0, 1)),
+  Predicted = factor(tree_prediction, levels = c(0, 1))
+)
+```
+:::
+
+
+
+
+
+::: {.callout-caution collapse="false" title="Task"}
+Compute the same classification metrics used for logistic regression.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+tree_metrics <- prob_metrics(
+  test_data_raw$Bad_Earnings, tree_prob, params$comparison_threshold
+)
+knitr::kable(tree_metrics, digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+data.frame(
+  Metric = logit_metrics$Metric,
+  Logistic = logit_metrics$Value,
+  Tree = tree_metrics$Value
+) |>
+  knitr::kable(digits = 3)
+```
+:::
+
+
+::: {.callout-tip title="Question"}
+How does CART's classification performance compare with logistic regression? Which model would you prefer if our primary objective is identifying companies at risk of bad earnings?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Accuracy: CART performs slightly better (83.0% vs. 80.6%).
+- Type I errors (False Positives): CART incorrectly flags fewer good-earnings companies as bad (12.4% vs. 16.2%), resulting in higher specificity and precision.
+- Type II errors (False Negatives): CART misses more bad-earnings companies (50.9% vs. 43.4%), resulting in lower recall (49.1% vs. 56.6%).
+- F1: The models perform almost identically (0.406 vs. 0.408), reflecting CART's tradeoff between higher precision and lower recall.
+
+Takeaway: CART achieves higher accuracy and fewer false alarms, but misses more companies experiencing bad earnings. If identifying at-risk companies is our priority, logistic regression may be preferable because of its higher recall. The preferred model ultimately depends on the relative costs of false positives and false negatives.
+:::
+
+
+
+
+::: {.callout-tip title="Question"}
+Can CART perform worse than logistic regression even when the underlying relationship contains thresholds?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Yes. A single tree may be unstable, especially with noisy data, correlated predictors, and limited bad-earnings observations.
+- It approximates smooth relationships using abrupt partitions and can have relatively high variance.
+- Its interpretability does not ensure strong test accuracy.
+:::
+
+## k-Nearest Neighbors (kNN)
+
+### Motivation
+
+Instead of estimating a global regression equation or a set of partitioning rules, kNN examines the training companies closest to the company being evaluated.
+
+::: {.callout-tip title="Question"}
+How would you explain kNN to an equity analyst without using mathematical notation?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Find historical companies with similar financial characteristics and examine how many experienced a bad earnings quarter.
+- Use that local history to estimate the target company's bad-earnings risk.
+:::
+
+### Distance and Probability
+
+For standardized numerical inputs, Euclidean distance between company $i$ and training company $j$ is
+
+$$
+d(i,j)=\sqrt{\sum_{m=1}^{p}(x_{im}-x_{jm})^2}.
+$$
+
+With ordinary, unweighted kNN, the estimated probability is the fraction of the $k$ nearest companies with bad earnings:
+
+$$
+\widehat p_i=\frac{1}{k}\sum_{j\in N_k(i)}\mathbf{1}(Y_j=\text{Bad}).
+$$
+
+The neighbor proportion is a probability estimate, though it may not be perfectly calibrated.
+
+::: {.callout-caution collapse="false" title="Task"}
+Calculate the distances from the first test company to all training companies. Display its five closest training neighbors.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+# For this demonstration only, fit the preprocessing transformation to all
+# training observations. caret fits it separately inside each CV fold.
+knn_scale <- caret::preProcess(train_x, method = c("center", "scale"))
+train_x_scaled <- predict(knn_scale, train_x)
+test_x_scaled <- predict(knn_scale, test_x)
+
+distance_to_first <- sqrt(rowSums(
+  sweep(as.matrix(train_x_scaled), 2,
+        as.numeric(as.matrix(test_x_scaled)[1, ]), "-")^2
+))
+
+nearest_five <- tibble(
+  Company_ID = train_data_raw$Company_ID,
+  Distance = distance_to_first,
+  Actual = train_data_raw$Bad_Earnings
+) %>% arrange(Distance) %>% slice_head(n = 5)
+
+knitr::kable(nearest_five, digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(nearest_five, digits = 3)
+```
+:::
+
+
+### Hyperparameter Tuning
+
+The choice of $k$ determines the size of the local neighborhood. Small $k$ can follow noise closely; large $k$ pools across increasingly dissimilar firms.
+
+::: {.callout-caution collapse="false" title="Task"}
+Tune $k$ using the same five-fold cross-validation scheme, with preprocessing repeated within each fold.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+knn_grid <- expand.grid(k = c(1, 3, 5, 9, 15, 25, 41, 61, 101,151, 201, 301))
+
+set.seed(2026)
+knn_fit <- caret::train(
+  x = train_x, y = train_y,
+  method = "knn", tuneGrid = knn_grid,
+  trControl = cv_control, metric = "ROC",
+  preProcess = c("center", "scale")
+)
+
+knitr::kable(knn_fit$results[, c("k", "ROC", "ROCSD")], digits = 3)
+knn_fit$bestTune
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(knn_fit$results[, c("k", "ROC", "ROCSD")], digits = 3)
+as.numeric(knn_fit$bestTune)
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Plot cross-validated AUC against the number of neighbors.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+ggplot(knn_fit$results, aes(x = k, y = ROC)) +
+  geom_line(color = "steelblue") + geom_point() +
+  geom_errorbar(aes(ymin = pmax(0, ROC - ROCSD),
+                    ymax = pmin(1, ROC + ROCSD)), width = 2) +
+  labs(title = "kNN: Choice of Neighborhood Size",
+       x = "Number of Neighbors (k)", y = "Cross-Validated ROC AUC") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(knn_fit$results, aes(x = k, y = ROC)) +
+  geom_line(color = "steelblue") + geom_point() +
+  geom_errorbar(aes(ymin = pmax(0, ROC - ROCSD),
+                    ymax = pmin(1, ROC + ROCSD)), width = 2) +
+  labs(title = "kNN: Choice of Neighborhood Size",
+       x = "Number of Neighbors (k)", y = "Cross-Validated ROC AUC") +
+  theme_minimal()
+```
+:::
+
+
+
+::: {.callout-tip title="Question"}
+How does neighborhood size ($k$) affect kNN's predictive performance? Why might a relatively large $k$ perform best, and what value would you select?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Small $k$: Cross-validated AUC is relatively low. Predictions based on only a few nearby companies are sensitive to noise and prone to overfitting.
+- Increasing $k$: AUC improves substantially as more neighbors are included, suggesting that averaging across companies helps reduce noise in the financial ratios and earnings outcomes.
+- Large $k$: Performance plateaus around 0.79–0.80. Although $k=201$ achieves the highest AUC, the improvement beyond $k=51$ or $k=101$ is small, and the error bars overlap considerably.
+- Why so many neighbors? With many potentially correlated financial ratios and relatively few bad-earnings companies, small neighborhoods may provide unreliable estimates of risk. Larger neighborhoods produce more stable predictions, although excessively large $k$ can eventually cause underfitting.
+- Model selection: We could select $k=201$ based on the highest cross-validated AUC, or prefer $k=101$ for a more localized model with nearly identical performance.
+
+Takeaway: In this application, reducing noise through larger neighborhoods appears more valuable than capturing highly localized patterns. However, greater flexibility does not necessarily improve out-of-sample prediction.
+:::
+
+
+
+::: {.callout-tip title="Question"}
+What is the expected effect of choosing $k=1$ instead of a much larger $k$?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- A one-neighbor classifier makes highly local decisions and is sensitive to idiosyncratic training outcomes.
+- A larger neighborhood smooths estimates but may miss important local variation.
+- Cross-validation helps find a useful compromise.
+:::
+
+
+### Predict
+
+::: {.callout-caution collapse="false" title="Task"}
+Predict the bad-earnings probability for every test company. Notice that ordinary kNN probabilities are based on discrete neighbor proportions.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+knn_prob <- bad_probability(knn_fit, test_x)
+knitr::kable(head(tibble(
+  Company_ID = test_data_raw$Company_ID,
+  kNN_Probability_Bad = knn_prob
+), 8), digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(head(tibble(
+  Company_ID = test_data_raw$Company_ID,
+  kNN_Probability_Bad = knn_prob
+), 8), digits = 3)
+```
+:::
+
+### Classify
+
+::: {.callout-caution collapse="false" title="Task"}
+Create the confusion matrix and compute the classification metrics using the same common threshold as the other models.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+knn_prediction <- as_class(knn_prob, params$comparison_threshold)
+table(
+  Actual = factor(test_data_raw$Bad_Earnings, levels = c(0, 1)),
+  Predicted = factor(knn_prediction, levels = c(0, 1))
+)
+
+knn_metrics <- prob_metrics(
+  test_data_raw$Bad_Earnings, knn_prob, params$comparison_threshold
+)
+knitr::kable(knn_metrics, digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+table(
+  Actual = factor(test_data_raw$Bad_Earnings, levels = c(0, 1)),
+  Predicted = factor(knn_prediction, levels = c(0, 1))
+)
+data.frame(
+  Metric = logit_metrics$Metric,
+  Logistic = logit_metrics$Value,
+  Tree = tree_metrics$Value,
+  kNN = knn_metrics$Value
+) |>
+  knitr::kable(digits = 3)
+```
+:::
+
+
+::: {.callout-tip title="Question"}
+How does kNN's classification performance compare with logistic regression and CART? Which model would you prefer if our primary objective is identifying companies at risk of bad earnings?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Accuracy: kNN achieves the highest accuracy (87.5%), compared with CART (83.0%) and logistic regression (80.6%).
+- Type I errors (False Positives): kNN has the lowest false positive rate (3.3% vs. 12.4% for CART and 16.2% for logistic regression). It rarely misclassifies good-earnings companies as bad.
+- Type II errors (False Negatives): kNN has a substantially higher false negative rate (81.1% vs. 50.9% for CART and 43.4% for logistic regression). It misses more than four out of five companies experiencing bad earnings.
+- Precision: When kNN predicts bad earnings, it is correct 43.5% of the time, outperforming both alternatives. However, it makes relatively few such predictions.
+- F1: Despite its higher accuracy and precision, kNN has the lowest F1 (0.263 vs. approximately 0.41), reflecting its particularly poor recall.
+
+Takeaway: kNN achieves the highest accuracy largely by avoiding false positives, but at the cost of missing most bad-earnings companies. If identifying at-risk companies is our priority, logistic regression appears preferable because of its substantially higher recall. This illustrates why accuracy can be misleading when the positive class is relatively rare.
+:::
+
+
+## Support Vector Machines (SVM)
+
+### Linear SVM: The Margin
+
+A linear SVM chooses a decision boundary while balancing the width of a separating **margin** against classification violations. The observations most influential in determining that boundary are called **support vectors**.
+
+::: {.callout-tip title="Question"}
+How does SVM's motivation differ from logistic regression?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+| Model | Approach |
+|---|---|
+| Logistic regression | Estimates the conditional class probability through a log-odds model |
+| Margin-based SVM | Seeks a decision function that separates classes while controlling model complexity |
+
+- The SVM's raw decision scores are not probabilities.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Use a small synthetic two-predictor example to visualize the SVM's separating line, margin contours, and support vectors. This illustration is separate from our financial dataset.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+toy_points <- tibble(
+  X1 = c(-2.1, -1.8, -1.4, -1.1, -1.6, -0.8,
+          0.8, 1.2, 1.6, 2.0, 1.1, 1.7),
+  X2 = c(-1.0, 0.3, -0.6, 0.8, -0.1, 0.4,
+         -0.5, 0.5, -0.2, 1.0, -1.0, 0.1),
+  Class = factor(rep(c("Bad", "Good"), each = 6),
+                 levels = c("Bad", "Good"))
+)
+
+toy_svm <- kernlab::ksvm(
+  x = as.matrix(toy_points[, c("X1", "X2")]),
+  y = toy_points$Class, type = "C-svc",
+  kernel = "vanilladot", C = 10, scaled = FALSE
+)
+
+toy_grid <- expand.grid(X1 = seq(-3, 3, length.out = 100),
+                        X2 = seq(-2, 2, length.out = 100))
+toy_grid$Decision <- as.numeric(kernlab::predict(
+  toy_svm, newdata = as.matrix(toy_grid), type = "decision"
+))
+
+support_indices <- unique(unlist(kernlab::alphaindex(toy_svm)))
+
+ggplot() +
+  geom_contour(data = toy_grid,
+               aes(x = X1, y = X2, z = Decision),
+               breaks = c(-1, 0, 1), color = "gray35") +
+  geom_point(data = toy_points,
+             aes(x = X1, y = X2, color = Class), size = 2.8) +
+  geom_point(data = toy_points[support_indices, ],
+             aes(x = X1, y = X2), shape = 21,
+             fill = NA, color = "black", size = 4.7, stroke = 1) +
+  scale_color_manual(values = c(Bad = "firebrick", Good = "steelblue")) +
+  coord_equal() +
+  labs(title = "Linear SVM: Boundary, Margins, and Support Vectors",
+       subtitle = "Contours: decision scores -1, 0, +1; circled observations are support vectors",
+       x = "Synthetic Feature 1", y = "Synthetic Feature 2") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot() +
+  geom_contour(data = toy_grid,
+               aes(x = X1, y = X2, z = Decision),
+               breaks = c(-1, 0, 1), color = "gray35") +
+  geom_point(data = toy_points,
+             aes(x = X1, y = X2, color = Class), size = 2.8) +
+  geom_point(data = toy_points[support_indices, ],
+             aes(x = X1, y = X2), shape = 21,
+             fill = NA, color = "black", size = 4.7, stroke = 1) +
+  scale_color_manual(values = c(Bad = "firebrick", Good = "steelblue")) +
+  coord_equal() +
+  labs(title = "Linear SVM: Boundary, Margins, and Support Vectors",
+       subtitle = "Contours: decision scores -1, 0, +1; circled observations are support vectors",
+       x = "Synthetic Feature 1", y = "Synthetic Feature 2") +
+  theme_minimal()
+```
+:::
+
+::: {.callout-tip title="Question"}
+Why are some observations identified as support vectors?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Their positions determine the fitted separating surface.
+- Observations well away from the margin generally do not determine the final decision function.
+- The margin balances separation with violations allowed by the cost parameter.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Fit a linear SVM using the financial predictors and common cross-validation folds. Tune its cost parameter $C$.
+
+Let's use a small/coarse grid for ease.  linear_svm_grid = expand.grid(C = c(0.1,1,10)). This should be expanded in practice. 
+
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+#linear_svm_grid <- expand.grid(
+ # C = 2^seq(-5, 10, by = 1)
+#) #Logarithmic grids are common for SVM tuning because the meaningful differences in regularization often occur multiplicatively rather than additively.
+linear_svm_grid = expand.grid(C = c(0.1,1,10)) #
+
+
+set.seed(2026)
+linear_svm_fit <- caret::train(
+  x = train_x, y = train_y,
+  method = "svmLinear", tuneGrid = linear_svm_grid,
+  trControl = cv_control, metric = "ROC",
+  preProcess = c("center", "scale")
+)
+
+knitr::kable(linear_svm_fit$results[, c("C", "ROC", "ROCSD")], digits = 3)
+linear_svm_fit$bestTune
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(linear_svm_fit$results[, c("C", "ROC", "ROCSD")], digits = 3)
+linear_svm_fit$bestTune
+```
+:::
+
+
+::: {.callout-tip title="Question"}
+What is the SVM's *margin*, and how does the parameter $C$ affect the tradeoff between fitting the training data and generalizing to new companies?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Margin: The distance between the decision boundary and the closest training observations. SVM seeks a boundary with a wide margin, providing greater separation between the two classes.
+- Margin violation: Occurs when a company falls inside the margin or is misclassified. SVM penalizes these violations, even when the company is still classified correctly.
+- Regularization: Discourages an overly complex or sensitive decision boundary that fits training observations too closely, potentially reducing overfitting.
+- Larger $C$: Penalizes margin violations more heavily. The SVM prioritizes fitting the training labels, potentially producing a narrower margin and a more complex decision boundary.
+- Smaller $C$: Allows more margin violations in exchange for stronger regularization, favoring a wider margin and potentially better generalization.
+
+Takeaway: $C$ controls how aggressively the SVM fits the training observations versus maintaining a wide margin. Neither extreme necessarily produces the best predictions for unseen companies, so we select $C$ using cross-validation.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Obtain the linear SVM's test-sample probabilities for bad earnings and compute its confusion matrix and performance metrics at the common threshold. We will compare these results with the RBF SVM's later.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+linear_svm_prob <- bad_probability(linear_svm_fit, test_x)
+stopifnot(all(is.finite(linear_svm_prob)),
+          all(linear_svm_prob >= 0 & linear_svm_prob <= 1))
+
+linear_svm_prediction <- as_class(linear_svm_prob, params$comparison_threshold)
+table(
+  Actual = factor(test_data_raw$Bad_Earnings, levels = c(0, 1)),
+  Predicted = factor(linear_svm_prediction, levels = c(0, 1))
+)
+
+linear_svm_metrics <- prob_metrics(
+  test_data_raw$Bad_Earnings, linear_svm_prob, params$comparison_threshold
+)
+knitr::kable(linear_svm_metrics, digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+table(
+  Actual = factor(test_data_raw$Bad_Earnings, levels = c(0, 1)),
+  Predicted = factor(linear_svm_prediction, levels = c(0, 1))
+)
+data.frame(
+  Metric = logit_metrics$Metric,
+  Logistic = logit_metrics$Value,
+  Tree = tree_metrics$Value,
+  kNN = knn_metrics$Value,
+  `Linear SVM` = linear_svm_metrics$Value
+) |>
+  knitr::kable(digits = 3)
+```
+:::
+
+
+### Nonlinear SVM: The RBF Kernel
+
+A linear decision boundary may be inadequate when the earnings-risk relationship contains thresholds and interactions. An RBF SVM compares observations through a kernel:
+
+$$
+K(x_i,x_j)=\exp\left(-\gamma\lVert x_i-x_j\rVert^2\right).
+$$
+
+In `kernlab`, the RBF kernel parameter is called `sigma`; it plays the role of $\gamma$ in this equation. The parameter $C$ controls regularization; `sigma` determines how rapidly similarity declines with distance.
+
+::: {.callout-tip title="Question"}
+How do very large values of `sigma` and $C$ affect the RBF SVM?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- A large `sigma` makes the kernel more local, potentially producing an irregular boundary.
+- A large $C$ more heavily penalizes training violations.
+- Together they can produce an overly flexible model.
+- Small `sigma` and stronger regularization generally produce smoother behavior.
+:::
+
+### Hyperparameter Tuning
+
+::: {.callout-caution collapse="false" title="Task"}
+Tune $C$ and `sigma` with five-fold cross-validation. Use ROC AUC so tuning does not depend on the initial 65% cutoff.
+
+Note that, despite its name, `sigma` is not a standard deviation. In the textbook Gaussian form, $\exp\left(-\lVert x_i-x_j\rVert^2 / (2s^2)\right)$, the width $s$ behaves like a standard deviation. `kernlab`'s `sigma` equals $1/(2s^2)$, an *inverse* width: larger `sigma` means a narrower, more local kernel. Useful values depend on the number and scale of predictors; `kernlab::sigest()` suggests roughly 0.01--0.05 for our 24 standardized features.
+
+Let's again use a coarse/small grid.  
+svm_grid <-  expand.grid(
+  sigma = c(0.01, 0.05, 0.25),
+  C = 2^seq(-4, 8, by = 2)
+)
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+# svmRadial tunes both sigma and C, so the grid needs both columns
+svm_grid <-  expand.grid(
+  sigma = c(0.01, 0.05, 0.25),
+  C = 2^seq(-4, 8, by = 2)
+)
+
+
+set.seed(2026)
+svm_fit <- caret::train(
+  x = train_x, y = train_y,
+  method = "svmRadial", tuneGrid = svm_grid,
+  trControl = cv_control, metric = "ROC",
+  preProcess = c("center", "scale")
+)
+
+knitr::kable(svm_fit$results[, c("sigma", "C", "ROC", "ROCSD")],
+             digits = 3)
+svm_fit$bestTune
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(svm_fit$results[, c("sigma", "C", "ROC", "ROCSD")],
+             digits = 3)
+svm_fit$bestTune
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Plot the tuning surface to see how regularization and kernel width jointly affect out-of-fold ranking performance.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+ggplot(svm_fit$results,
+       aes(x = factor(C), y = factor(sigma), fill = ROC)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.3f", ROC)), size = 3) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "RBF SVM: Cross-Validated ROC AUC",
+       x = "Cost (C)", y = "Kernel Parameter (sigma)", fill = "AUC") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(svm_fit$results,
+       aes(x = factor(C), y = factor(sigma), fill = ROC)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.3f", ROC)), size = 3) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "RBF SVM: Cross-Validated ROC AUC",
+       x = "Cost (C)", y = "Kernel Parameter (sigma)", fill = "AUC") +
+  theme_minimal()
+```
+:::
+
+::: {.callout-tip title="Question"}
+Why is it not sufficient to choose the parameters that produce the highest training AUC?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Very flexible hyperparameters can fit training-specific noise.
+- Cross-validated AUC measures ranking performance on observations excluded from each fitting fold.
+- The final test sample has no role in hyperparameter selection.
+:::
+
+### SVM Scores, Classes, and Probabilities
+
+An SVM first learns a **decision function**. Its decision scores place companies on opposite sides of a separating surface; the scores are *not probabilities*. Probability estimation requires an additional mapping, such as sigmoid (Platt-type) calibration:
+
+$$
+\widehat p(x)=\frac{1}{1+\exp(A f(x)+B)}.
+$$
+
+The `caret` `svmRadial` model uses `kernlab::ksvm`. When probability estimates are requested, `kernlab` fits an internal sigmoid probability model using training-only cross-validated decision scores. We rely on that built-in mechanism; we do **not** fit a second calibration model or use the final test labels for calibration.
+
+::: {.callout-tip title="Question"}
+Why can ROC/AUC use raw SVM decision scores but not a 65% probability cutoff?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- ROC/AUC only needs continuous scores that rank risk correctly.
+- The scale of a raw SVM score is not a probability scale; an SVM score of 0.65 does not mean a 65% chance of bad earnings.
+- A probability threshold requires the calibrated probability output.
+:::
+
+::: {.callout-tip title="Question"}
+Does a sigmoid calibration necessarily improve ROC AUC?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- No. A strictly monotone score transformation preserves rank and therefore ROC AUC.
+- Calibration seeks meaningful event probabilities, not a different ranking.
+- The direction of the scores must be oriented so higher values correspond to greater bad-earnings risk.
+:::
+
+### Predict
+
+::: {.callout-caution collapse="false" title="Task"}
+Use the fitted RBF SVM to predict the probability of bad earnings for each test company. These probabilities come from the Platt sigmoid that `kernlab` fitted during training (because `classProbs = TRUE`) and applies to each company's decision score. Our helper `bad_probability()` simply calls `predict(..., type = "prob")` and extracts the `Bad` column. Note that the `Bad` class is guaranteed by that column selection, so the checks below only confirm the values are finite probabilities.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+svm_prob <- bad_probability(svm_fit, test_x)
+stopifnot(all(is.finite(svm_prob)),
+          all(svm_prob >= 0 & svm_prob <= 1))
+
+knitr::kable(head(tibble(
+  Company_ID = test_data_raw$Company_ID,
+  SVM_Probability_Bad = svm_prob
+), 8), digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(head(tibble(
+  Company_ID = test_data_raw$Company_ID,
+  SVM_Probability_Bad = svm_prob
+), 8), digits = 3)
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Also inspect the raw decision function for a few companies. Apply the *fitted SVM's* preprocessing transformation before directly calling `kernlab`.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+# caret supplies the scaled test matrix when we call predict(svm_fit, ...).
+# To obtain raw kernlab decision scores, repeat the same transformation.
+svm_test_scaled <- predict(svm_fit$preProcess, test_x)
+svm_raw_scores <- as.numeric(kernlab::predict(
+  svm_fit$finalModel, newdata = as.matrix(svm_test_scaled),
+  type = "decision"
+))
+
+# Match the score orientation to the explicitly identified Bad probability.
+# This compares scores with model outputs, not with held-out outcomes.
+if (stats::cor(svm_raw_scores, svm_prob) < 0) {
+  svm_raw_scores <- -svm_raw_scores
+}
+
+knitr::kable(head(tibble(
+  Company_ID = test_data_raw$Company_ID,
+  Oriented_Decision_Score = svm_raw_scores,
+  Probability_Bad = svm_prob,
+  Class_at_Common_Threshold = ifelse(
+    svm_prob >= params$comparison_threshold, "Bad", "Good"
+  )
+), 8), digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(head(tibble(
+  Company_ID = test_data_raw$Company_ID,
+  Oriented_Decision_Score = svm_raw_scores,
+  Probability_Bad = svm_prob,
+  Class_at_Common_Threshold = ifelse(
+    svm_prob >= params$comparison_threshold, "Bad", "Good"
+  )
+), 8), digits = 3)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Does a score of 0.8 imply an 80% chance of bad earnings?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- No. The score is a value of the SVM decision function, and its numerical scale is unrelated to a percentage probability.
+- The probability column is estimated using the built-in sigmoid mapping.
+- Those probability estimates may still be imperfectly calibrated.
+:::
+
+### Classify
+
+::: {.callout-caution collapse="false" title="Task"}
+Apply the common probability threshold to the SVM's predicted probabilities for the entire test sample. (We previewed these classes for a few companies above.) Then compare the predicted classes with the actual test-sample outcomes by creating the confusion matrix and performance metrics.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+rbf_svm_prediction <- as_class(svm_prob, params$comparison_threshold)
+table(
+  Actual = factor(test_data_raw$Bad_Earnings, levels = c(0, 1)),
+  Predicted = factor(rbf_svm_prediction, levels = c(0, 1))
+)
+
+rbf_svm_metrics <- prob_metrics(
+  test_data_raw$Bad_Earnings, svm_prob, params$comparison_threshold
+)
+knitr::kable(rbf_svm_metrics, digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+table(
+  Actual = factor(test_data_raw$Bad_Earnings, levels = c(0, 1)),
+  Predicted = factor(rbf_svm_prediction, levels = c(0, 1))
+)
+knitr::kable(rbf_svm_metrics, digits = 3)
+```
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Compare the SVM's *native* classes (the side of its decision boundary, decision score 0) with the classes produced by the probability threshold.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+svm_native_class <- kernlab::predict(
+  svm_fit$finalModel, newdata = as.matrix(svm_test_scaled), type = "response"
+)
+svm_native_bad <- sum(svm_native_class == "Bad")
+svm_threshold_bad <- sum(rbf_svm_prediction == 1)
+
+table(
+  Native_Boundary = factor(svm_native_class, levels = c("Good", "Bad")),
+  Probability_Threshold = factor(ifelse(rbf_svm_prediction == 1, "Bad", "Good"),
+                                 levels = c("Good", "Bad"))
+)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+table(
+  Native_Boundary = factor(svm_native_class, levels = c("Good", "Bad")),
+  Probability_Threshold = factor(ifelse(rbf_svm_prediction == 1, "Bad", "Good"),
+                                 levels = c("Good", "Bad"))
+)
+```
+
+- At its own decision boundary, the full RBF SVM flags only `r svm_native_bad` of `r length(svm_native_class)` test companies as Bad. The probability threshold of `r params$comparison_threshold` flags `r svm_threshold_bad`.
+- With about 15% bad-earnings companies and an unweighted hinge loss, the cheapest solution places nearly every company on the Good side of the margin. Most test decision scores cluster tightly near the Good-side margin.
+- The decision scores still *rank* companies, so the sigmoid probability mapping can spread them across a wide probability range, and a lower probability cutoff recovers useful classifications.
+- Takeaway: an SVM's default classes are not a substitute for choosing a threshold. Alternatives include class weights (as in the two-predictor visualization below) or thresholding the calibrated probabilities, as we do here.
+:::
+
+
+# Compare the Models
+
+## Visualize the Classification Boundaries
+
+We cannot draw the decision boundary in the entire predictor space. Instead, we will fit **new, illustrative two-predictor models** using GPM and AssetTurn. These are *not* the full-predictor models used for our final performance comparison.
+
+::: {.callout-caution collapse="false" title="Task"}
+Standardize just GPM and AssetTurn using training-sample values, and create a two-dimensional grid over their observed central range.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+vis_features <- c("GPM", "AssetTurn")
+vis_centers <- sapply(train_data_raw[, vis_features], mean)
+vis_sds <- sapply(train_data_raw[, vis_features], sd)
+
+vis_train <- as.data.frame(scale(
+  train_data_raw[, vis_features], center = vis_centers, scale = vis_sds
+))
+vis_labeled <- vis_train %>%
+  mutate(Bad_Earnings = train_data_raw$Bad_Earnings, Class = train_y)
+
+vis_grid <- expand.grid(
+  GPM = seq(quantile(vis_train$GPM, .01),
+            quantile(vis_train$GPM, .99), length.out = 100),
+  AssetTurn = seq(quantile(vis_train$AssetTurn, .01),
+                  quantile(vis_train$AssetTurn, .99), length.out = 100)
+)
+```
+
+::: {.callout-caution collapse="false" title="Task"}
+Fit two-predictor logistic, CART, kNN, and RBF SVM models. Retain the full models' selected `cp` and `k`. For the RBF SVM, keep the selected $C$, but choose `sigma` for the two-dimensional input space and weight the classes by inverse frequency.
+:::
+
+Note: Why not reuse the full SVM's `sigma`?" --- 
+The RBF kernel is $\exp(-\sigma\lVert x-x'\rVert^2)$. Squared distances between standardized observations grow with the number of predictors, so a `sigma` tuned on 24 inputs produces a nearly constant kernel on 2 inputs. In addition, with roughly 15% bad-earnings companies and only two weak predictors, an unweighted SVM tends to place every company on the Good side of its margin, so the Platt-scaled probabilities collapse to about the base rate everywhere. We therefore use `kernlab::sigest()` to choose a data-driven `sigma` for the two inputs, and we up-weight the Bad class.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+vis_logit <- glm(Bad_Earnings ~ GPM + AssetTurn,
+                 data = vis_labeled, family = binomial())
+vis_tree <- rpart::rpart(
+  Class ~ GPM + AssetTurn, data = vis_labeled, method = "class",
+  control = rpart::rpart.control(cp = tree_fit$bestTune$cp, xval = 0)
+)
+
+# kNN's winner probability is the neighbor-vote fraction for its winning
+# class; reverse it when the winner is Good to obtain P(Bad).
+vis_knn_class <- class::knn(
+  train = vis_train, test = vis_grid, cl = train_y,
+  k = knn_fit$bestTune$k, prob = TRUE
+)
+vis_knn_prob <- ifelse(
+  vis_knn_class == "Bad", attr(vis_knn_class, "prob"),
+  1 - attr(vis_knn_class, "prob")
+)
+
+# sigest() returns the 10%, 50%, and 90% quantiles of a reasonable sigma
+# range for these inputs; use the median. It samples, so set the seed first.
+set.seed(2026)
+vis_sigma <- unname(kernlab::sigest(as.matrix(vis_train), scaled = FALSE)[2])
+vis_class_weights <- c(Bad = sum(train_y == "Good") / sum(train_y == "Bad"),
+                       Good = 1)
+
+vis_svm <- kernlab::ksvm(
+  x = as.matrix(vis_train), y = train_y, type = "C-svc",
+  kernel = "rbfdot", kpar = list(sigma = vis_sigma),
+  C = svm_fit$bestTune$C, class.weights = vis_class_weights,
+  scaled = FALSE, prob.model = TRUE
+)
+
+boundary_grid <- bind_rows(
+  vis_grid %>% mutate(Model = "Logistic",
+    Probability = as.numeric(predict(vis_logit, vis_grid, type = "response"))),
+  vis_grid %>% mutate(Model = "CART",
+    Probability = as.numeric(predict(vis_tree, vis_grid, type = "prob")[, "Bad"])),
+  vis_grid %>% mutate(Model = "kNN", Probability = vis_knn_prob),
+  vis_grid %>% mutate(Model = "RBF SVM",
+    Probability = as.numeric(kernlab::predict(
+      vis_svm, newdata = as.matrix(vis_grid),
+      type = "probabilities")[, "Bad"]))
+)
+
+boundary_points <- purrr::map_dfr(unique(boundary_grid$Model), function(model) {
+  vis_labeled %>% mutate(Model = model)
+})
+```
+
+::: {.callout-caution collapse="false" title="Task"}
+Compare the four probability surfaces using the same axes, company observations, and common training-selected probability contour.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+ggplot(boundary_grid, aes(x = GPM, y = AssetTurn)) +
+  geom_raster(aes(fill = Probability)) +
+  geom_contour(aes(z = Probability),
+               breaks = params$comparison_threshold,
+               color = "black", linewidth = 0.6) +
+  geom_point(data = boundary_points,
+             aes(color = Class), size = 0.45, alpha = 0.22) +
+  facet_wrap(~ Model, ncol = 2) +
+  scale_fill_gradient(low = "white", high = "firebrick", limits = c(0, 1),
+                      labels = scales::percent_format()) +
+  scale_color_manual(values = c(Bad = "firebrick4", Good = "steelblue4")) +
+  labs(title = "Two-Predictor Classification Surfaces",
+       subtitle = "Black contour: training-selected probability threshold (if reached)",
+       x = "Standardized GPM", y = "Standardized Asset Turnover",
+       fill = "P(Bad)", color = "Actual") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(boundary_grid, aes(x = GPM, y = AssetTurn)) +
+  geom_raster(aes(fill = Probability)) +
+  geom_contour(aes(z = Probability),
+               breaks = params$comparison_threshold,
+               color = "black", linewidth = 0.6) +
+  geom_point(data = boundary_points,
+             aes(color = Class), size = 0.45, alpha = 0.22) +
+  facet_wrap(~ Model, ncol = 2) +
+  scale_fill_gradient(low = "white", high = "firebrick", limits = c(0, 1),
+                      labels = scales::percent_format()) +
+  scale_color_manual(values = c(Bad = "firebrick4", Good = "steelblue4")) +
+  labs(title = "Two-Predictor Classification Surfaces",
+       subtitle = "Black contour: training-selected probability threshold (if reached)",
+       x = "Standardized GPM", y = "Standardized Asset Turnover",
+       fill = "P(Bad)", color = "Actual") +
+  theme_minimal()
+```
+:::
+
+::: {.callout-tip title="Question"}
+How does the shape of each classifier's predicted risk surface relate to its algorithm?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+| Model | Shape of predicted risk surface |
+|---|---|
+| Logistic | Straight iso-log-odds lines for these two inputs |
+| CART | Rectangular, piecewise-constant regions |
+| kNN | Locally varying, sometimes jagged regions |
+| RBF SVM | Often smoother, curved patterns |
+
+- The plots display estimated probabilities, not necessarily an observed perfect class separation.
+:::
+
+::: {.callout-tip title="Question"}
+Why might some panels contain no black threshold contour?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- The model may not predict a probability as high as the selected cutoff anywhere on the displayed grid.
+- This is especially possible with a rare positive class and only two predictors.
+- It does not mean that the classifier is broken or that its AUC must be poor.
+:::
+
+
+
+## Test-Sample Classification Metrics
+
+::: {.callout-caution collapse="false" title="Task"}
+Combine test probabilities from the five full-predictor models. Check that each row represents the same held-out company.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+model_probabilities <- tibble(
+  Company_ID = test_data_raw$Company_ID,
+  Actual = test_data_raw$Bad_Earnings,
+  Logistic = logit_prob,
+  CART = tree_prob,
+  kNN = knn_prob,
+  `Linear SVM` = linear_svm_prob,
+  `RBF SVM` = svm_prob
+)
+
+stopifnot(nrow(model_probabilities) == nrow(test_data_raw))
+stopifnot(all(vapply(model_probabilities[-(1:2)], function(x) {
+  all(is.finite(x) & x >= 0 & x <= 1)
+}, logical(1))))
+
+long_predictions <- model_probabilities %>%
+  pivot_longer(cols = c("Logistic", "CART", "kNN", "Linear SVM", "RBF SVM"),
+               names_to = "Model", values_to = "Probability")
+```
+
+::: {.callout-caution collapse="false" title="Task"}
+Calculate the classification metrics at the *common training-selected threshold* and include ROC AUC, which does not depend on that probability threshold.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+comparison_metrics <- long_predictions %>%
+  group_by(Model) %>%
+  group_modify(~ {
+    metrics <- prob_metrics(.x$Actual, .x$Probability,
+                            params$comparison_threshold)
+    tibble(
+      Accuracy = get_metric(metrics, "Accuracy"),
+      Precision = get_metric(metrics, "Precision"),
+      Sensitivity = get_metric(metrics, "Sensitivity (Recall)"),
+      Specificity = get_metric(metrics, "Specificity"),
+      FPR = get_metric(metrics, "False Positive Rate (Type I)"),
+      FNR = get_metric(metrics, "False Negative Rate (Type II)"),
+      F1 = get_metric(metrics, "F1"),
+      AUC = get_auc(.x$Actual, .x$Probability)
+    )
+  }) %>%
+  ungroup() %>%
+  mutate(Model = factor(Model,
+    levels = c("Logistic", "CART", "kNN", "Linear SVM", "RBF SVM"))) %>%
+  arrange(Model)
+
+knitr::kable(comparison_metrics, digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(comparison_metrics, digits = 3)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Suppose the portfolio manager considers misclassifying a Bad company as Good particularly costly. Which model would you prefer based on these results? Would your choice change if you emphasized overall accuracy instead?
+:::
+::: {.callout-note collapse="true" title="Answer"}
+
+- Logistic regression may be preferred because it has the highest sensitivity (0.566), correctly identifying 56.6% of genuinely Bad companies.
+
+- Recall that sensitivity (recall) measures the proportion of actual positive cases correctly identified:
+
+  $$
+  \text{Sensitivity} = 1-\text{FNR} = \frac{TP}{TP+FN}
+  $$
+
+- In our case, Bad is the positive class and Good is the negative class. Thus, classification outcomes are defined as follows:
+
+  | Actual | Predicted | Classification |
+  |:-------|:----------|:---------------|
+  | Bad    | Bad       | True Positive (TP) |
+  | Good   | Good      | True Negative (TN) |
+  | Good   | Bad       | False Positive (FP) — Type I error |
+  | Bad    | Good      | False Negative (FN) — Type II error |
+
+- The distinction between classification errors is particularly important:
+
+  - False positive (FP): A Good company is incorrectly classified as Bad. The portfolio manager might unnecessarily exclude a good investment.
+  - False negative (FN): A Bad company is incorrectly classified as Good. The portfolio manager might invest in a company that subsequently reports bad earnings.
+
+- If false negatives are especially costly, prioritizing sensitivity (minimizing the false negative rate) is appropriate.
+
+- kNN has the highest accuracy (0.875), but its sensitivity is only 0.189. It fails to identify more than 81% of Bad companies.
+
+- This illustrates why accuracy can be misleading, particularly when classes are imbalanced and the costs of classification errors differ.
+
+- However, even logistic regression misses 43.4% of Bad companies. We might improve sensitivity by lowering the classification threshold, at the expense of more false positives.
+
+- Ultimately, model and threshold selection should reflect the relative economic costs of false negatives and false positives.
+
+:::
+
+
+
+## ROC Curves
+
+::: {.callout-caution collapse="false" title="Task"}
+Plot the test-sample ROC curves of all four classifiers, using continuous predicted probabilities rather than predicted classes.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+roc_data <- long_predictions %>%
+  group_by(Model) %>%
+  group_modify(~ {
+    roc <- roc_object(.x$Actual, .x$Probability)
+    tibble(FPR = 1 - as.numeric(roc$specificities),
+           Sensitivity = as.numeric(roc$sensitivities))
+  }) %>% ungroup()
+
+ggplot(roc_data, aes(x = FPR, y = Sensitivity, color = Model)) +
+  geom_line(linewidth = 1) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(title = "ROC Curves: Held-Out Companies",
+       x = "False Positive Rate", y = "Sensitivity") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(roc_data, aes(x = FPR, y = Sensitivity, color = Model)) +
+  geom_line(linewidth = 1) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(title = "ROC Curves: Held-Out Companies",
+       x = "False Positive Rate", y = "Sensitivity") +
+  theme_minimal()
+```
+:::
+
+
+## Classification-Probability Threshold
+
+::: {.callout-caution collapse="false" title="Task"}
+Compare all four classifiers at the logistic lesson's original 65% threshold. Count the number of companies flagged as bad by each model.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+flags_65 <- long_predictions %>%
+  group_by(Model) %>%
+  summarise(
+    Flagged_Bad = sum(Probability >= params$prob_threshold),
+    Companies = n(),
+    Flag_Rate = Flagged_Bad / Companies,
+    .groups = "drop"
+  )
+knitr::kable(flags_65, digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(flags_65, digits = 3)
+```
+:::
+
+::: {.callout-tip title="Question"}
+What would it mean if a classifier flagged almost no companies at the 65% cutoff but still had a respectable AUC?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- It may rank risky companies above less risky companies without assigning high absolute probability estimates.
+- The fixed 65% threshold then produces few positive classifications.
+- We must distinguish the model's ranking ability from the choice of a decision threshold and the calibration of its probabilities.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Using only cross-validated training predictions from each fitted model, plot sensitivity, precision, and F1 against the probability threshold. Do not tune a threshold using test labels.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+cv_scores <- bind_rows(
+  logit_fit$pred %>% transmute(Model = "Logistic", Actual = as.integer(obs == "Bad"), Probability = Bad),
+  tree_fit$pred %>% transmute(Model = "CART", Actual = as.integer(obs == "Bad"), Probability = Bad),
+  knn_fit$pred %>% transmute(Model = "kNN", Actual = as.integer(obs == "Bad"), Probability = Bad),
+  svm_fit$pred %>% transmute(Model = "RBF SVM", Actual = as.integer(obs == "Bad"), Probability = Bad)
+)
+
+threshold_sensitivity <- cv_scores %>%
+  group_by(Model) %>%
+  group_modify(~ purrr::map_dfr(threshold_candidates, function(t) {
+    m <- prob_metrics(.x$Actual, .x$Probability, t)
+    tibble(Threshold = t,
+           Sensitivity = get_metric(m, "Sensitivity (Recall)"),
+           Precision = get_metric(m, "Precision"),
+           F1 = get_metric(m, "F1"))
+  })) %>% ungroup() %>%
+  pivot_longer(c(Sensitivity, Precision, F1),
+               names_to = "Metric", values_to = "Value")
+
+ggplot(threshold_sensitivity,
+       aes(x = Threshold, y = Value, color = Metric)) +
+  geom_line(na.rm = TRUE) +
+  geom_vline(xintercept = params$comparison_threshold,
+             linetype = "dashed", color = "gray40") +
+  facet_wrap(~ Model, ncol = 2) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(title = "Training-Only Threshold Sensitivity",
+       subtitle = "Five-fold out-of-fold predictions; dashed line = common threshold",
+       y = "Rate / F1") +
+  theme_minimal()
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ggplot(threshold_sensitivity,
+       aes(x = Threshold, y = Value, color = Metric)) +
+  geom_line(na.rm = TRUE) +
+  geom_vline(xintercept = params$comparison_threshold,
+             linetype = "dashed", color = "gray40") +
+  facet_wrap(~ Model, ncol = 2) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(title = "Training-Only Threshold Sensitivity",
+       subtitle = "Five-fold out-of-fold predictions; dashed line = common threshold",
+       y = "Rate / F1") +
+  theme_minimal()
+```
+:::
+
+
+::: {.callout-tip title="Question"}
+Interpret the plots. What do they suggest about the sensitivity of each model to the choice of classification threshold?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- General tradeoff: Lowering the threshold generally increases sensitivity (identifies more Bad companies) but reduces precision (more false alarms).
+
+- CART: The curves are relatively flat over a broad range of thresholds. Its classification performance is less sensitive to the precise threshold chosen, suggesting greater *threshold robustness*.
+
+- kNN: Sensitivity declines sharply near the common threshold. Small changes in the threshold can produce substantial changes in classification performance.
+
+- Logistic and RBF SVM: Performance changes more gradually with the threshold, allowing us to adjust the sensitivity-precision tradeoff more smoothly.
+
+- Implication: If avoiding investments in Bad companies is especially important, a lower threshold may be preferable, even at the expense of more false positives.
+
+- Caution: Threshold robustness does not necessarily imply better predictive performance. A model can exhibit stable but relatively poor sensitivity.
+
+Ultimately, the appropriate model and threshold depend on both predictive performance and the economic costs of classification errors.
+:::
+
+
+
+
+# Extension: Explicitly Engineer Nonlinear Features
+
+CART, kNN, and SVM can learn flexible relationships without us writing down the exact interaction terms. But logistic regression can also express nonlinear relationships if we engineer appropriate features.
+
+::: {.callout-caution collapse="false" title="Task"}
+Create an interaction between GPM and AssetTurn, and a fixed economically motivated low-operating-margin indicator. Fit an augmented logistic regression with the same cross-validation protocol. Compare its cross-validated AUC with that of the additive logistic benchmark; do not use the test set to select the features.
+:::
+```{r}
+#| code-fold: true
+#| code-summary: "Code"
+#| output: false
+augment_features <- function(x) {
+  x %>% mutate(
+    GPM_x_AssetTurn = GPM * AssetTurn,
+    Low_OpMargin = as.integer(OpMargin < 0.05)
+  )
+}
+
+train_x_augmented <- augment_features(train_x)
+
+set.seed(2026)
+augmented_logit_fit <- caret::train(
+  x = train_x_augmented, y = train_y,
+  method = "glm", family = binomial(),
+  trControl = cv_control, metric = "ROC",
+  preProcess = c("center", "scale")
+)
+
+knitr::kable(tibble(
+  Model = c("Additive Logistic", "Engineered-Feature Logistic"),
+  CV_AUC = c(logit_fit$results$ROC[1], augmented_logit_fit$results$ROC[1]),
+  CV_AUC_SD = c(logit_fit$results$ROCSD[1],
+                augmented_logit_fit$results$ROCSD[1])
+), digits = 3)
+```
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+knitr::kable(tibble(
+  Model = c("Additive Logistic", "Engineered-Feature Logistic"),
+  CV_AUC = c(logit_fit$results$ROC[1], augmented_logit_fit$results$ROC[1]),
+  CV_AUC_SD = c(logit_fit$results$ROCSD[1],
+                augmented_logit_fit$results$ROCSD[1])
+), digits = 3)
+```
+:::
+
+::: {.callout-tip title="Question"}
+What does this comparison tell us about the phrase *nonlinear classifier*?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Nonlinear relationships do not require a nonlinear algorithm.
+- A logistic model can construct nonlinear decision regions in the original financial-ratio space when supplied with interactions, threshold features, or other transformations.
+- The important difference is how the model learns or specifies those relationships.
+- A more flexible algorithm may reduce feature engineering, but does not guarantee better generalization.
+:::
+
+# Conclusions
+
+::: {.callout-tip title="Question"}
+Summarize the central tradeoff among the four classifiers in this application.
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+| Model | Central tradeoff |
+|---|---|
+| **Logistic** | Transparent additive benchmark; nonlinearities require explicit feature construction. |
+| **CART** | Interpretable rules and thresholds, but a single tree may be unstable or approximate smooth effects poorly. |
+| **kNN** | Local similarity without a global equation, but distances depend on scaling, redundant predictors, and neighborhood size. |
+| **RBF SVM** | Flexible, margin-based nonlinear boundaries, but performance depends on kernel width and regularization; risk probabilities require a separate calibration mapping. |
+
+- **Across all four:** hyperparameters and thresholds must be chosen with training-only information, and predictions must be assessed on the same untouched holdout observations.
+- AUC measures ranking; confusion matrices depend on decision thresholds; calibration measures probability reliability.
+:::
