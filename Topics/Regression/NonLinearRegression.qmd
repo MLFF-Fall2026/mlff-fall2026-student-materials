@@ -1,0 +1,1967 @@
+---
+title: "Nonlinear Regression: Predicting Option Prices"
+subtitle: "GAMs, regression trees, random forests, gradient boosting, and neural networks"
+author: Mike Aguilar
+format:
+  html:
+    toc: true
+    toc-depth: 5
+    toc-location: left
+    embed-resources: true
+editor: visual
+execute:
+  warning: false
+  echo: true
+---
+
+# Background
+
+You are a quantitative analyst on an options desk. Your manager asks you to develop a model that predicts the price of a European call option from observable characteristics of the option and its underlying stock. A call grants its holder the right, but not the obligation, to buy the underlying at a specified strike price $K$ on expiration. The stock price is $S$.
+
+Our dependent variable is the normalized call (C) price, $Y=C/K$. Dividing the option price by the strike makes contracts with different strike levels comparable. We have four predictors:
+
+| Predictor | Symbol | Economic interpretation |
+|------------------------|------------------------|------------------------|
+| Moneyness | $M=S/K$ | Higher moneyness generally raises the value of a call. $M>1$ means the call is in the money. |
+| Volatility | $\sigma$ | Greater uncertainty about the stock price generally raises a call's value. |
+| Time to maturity | $T$ | More time until expiration generally makes the call more valuable (under our assumptions). |
+| Risk-free rate | $r$ | A higher continuously compounded rate generally increases the value of a call with other inputs fixed. |
+
+Our goal is to learn the *conditional mean pricing function*:
+
+$$
+Y_i=f(M_i,\sigma_i,T_i,r_i)+\varepsilon_i,
+\qquad E[\varepsilon_i\mid M_i,\sigma_i,T_i,r_i]=0.
+$$
+
+The data are synthetic, with 30,000 independently simulated contracts. This controlled setting is useful for studying how algorithms approximate an unknown function; it does not demonstrate that machine learning outperforms an established option-pricing formula in live markets.
+
+::: {.callout-tip title="Question"}
+Suppose your boss suggests estimating an OLS regression with these four predictors.
+
+- What assumption would a model with only linear terms impose on the relationship between each predictor and option price?
+- How might we recognize when that assumption is too restrictive?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- With only linear terms, OLS imposes a constant change in the conditional mean normalized price for a one-unit change in each predictor, holding the others fixed. It does not require the predictors themselves to be normally distributed.
+- Curvature in exploratory plots or systematic patterns in OLS residuals may suggest that constant-slope relationships are inadequate. Such patterns are descriptive rather than proof of the true functional form.
+:::
+
+# Housekeeping
+
+::: {.callout-caution collapse="false" title="Task"}
+Reset the R workspace, load packages, set reproducibility and modeling choices, and define a few compact helper functions. Keep all expensive tuning limited to a few understandable alternatives.
+:::
+
+```{r}
+#| label: setup
+#| code-fold: true
+#| code-summary: "Code"
+
+cat("\014")
+rm(list = ls())
+
+required_packages <- c(
+  "tidyverse", "readxl", "gt", "scales", "here", "mgcv",
+  "rpart", "rpart.plot", "ranger", "xgboost", "nnet"
+)
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+if (length(missing_packages) > 0) {
+  stop("Install these packages before rendering: ",
+       paste(missing_packages, collapse = ", "))
+}
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(readxl)
+  library(gt)
+  library(scales)
+  library(here)
+  library(mgcv)
+  library(rpart)
+  library(rpart.plot)
+  library(ranger)
+  library(xgboost)
+  library(nnet)
+})
+
+theme_set(theme_minimal(base_size = 12))
+set.seed(2026)
+
+settings <- list(
+  seed = 2026,
+  train_share = 0.60,
+  validation_share = 0.20,
+  test_share = 0.20,
+  forest_trees = 300L,
+  forest_min_nodes = c(5L, 20L),
+  xgb_max_rounds = 1000L,
+  xgb_learning_rate = 0.05,
+  xgb_max_depth = 3L,
+  nn_hidden_units = c(5L, 10L),
+  nn_starts = 2L,
+  nn_decay = 0.01,
+  curve_points = 151L,
+  surface_points = 51L,
+  permutation_n = 850L,
+  permutation_repeats = 5L,
+  pdp_reference_n = 220L,
+  pdp_points = 51L
+)
+
+predictors <- c(
+  "Moneyness", "Volatility", "Time_to_Maturity", "Risk_Free_Rate"
+)
+target <- "Normalized_Call_Price"
+
+rmse <- function(truth, prediction) {
+  sqrt(mean((truth - prediction)^2))
+}
+
+model_metrics <- function(truth, prediction, training_mean) {
+  tibble(
+    RMSE = rmse(truth, prediction),
+    MAE = mean(abs(truth - prediction)),
+    R2_Test = 1 - sum((truth - prediction)^2) /
+      sum((truth - training_mean)^2)
+  )
+}
+
+gt_compact <- function(data, title = NULL, subtitle = NULL) {
+  out <- gt(data)
+  if (!is.null(title)) {
+    out <- tab_header(out, title = title, subtitle = subtitle)
+  }
+  out |>
+    sub_missing(missing_text = "—") |>
+    cols_align(align = "center") |>
+    opt_row_striping()
+}
+
+# Predictors enter the forest, tree, and other models with their original units.
+# The NN alone will need training-sample standardization later.
+feature_matrix <- function(data) {
+  as.matrix(data[, predictors, drop = FALSE])
+}
+```
+
+# Data
+
+## Read and validate
+
+The simulation script `SimulatedData-NonLinearRegression.R` creates `Data/option_pricing_data.xlsx`. Read the workbook rather than sourcing the simulation script: sourcing it would clear the workspace and generate a new dataset.
+
+::: {.callout-caution collapse="false" title="Task"}
+Import the `Data` worksheet, check its variables and missingness, and verify that observed option prices and predictors fall in their intended domains.
+:::
+
+```{r}
+#| label: read-and-validate
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+
+input_file <- here("Data", "option_pricing_data.xlsx")
+if (!file.exists(input_file)) {
+  stop("Missing Data/option_pricing_data.xlsx. Run SimulatedData-NonLinearRegression.R first.")
+}
+
+options_data <- read_excel(input_file, sheet = "Data") |>
+  as_tibble()
+
+required_columns <- c("Option_ID", predictors, target)
+stopifnot(
+  all(required_columns %in% names(options_data)),
+  nrow(options_data) == 30000L,
+  !anyNA(options_data[, required_columns]),
+  anyDuplicated(options_data$Option_ID) == 0L,
+  all(vapply(options_data[c(predictors, target)], is.numeric, logical(1)))
+)
+stopifnot(
+  all(options_data$Moneyness > 0),
+  all(options_data$Volatility > 0),
+  all(options_data$Time_to_Maturity > 0),
+  all(options_data[[target]] > 0),
+  all(is.finite(as.matrix(options_data[c(predictors, target)])))
+)
+
+options_summary <- options_data |>
+  summarise(
+    Contracts = n(),
+    `Unique IDs` = n_distinct(Option_ID),
+    `Missing values` = sum(is.na(as.matrix(pick(everything())))),
+    `Minimum C/K` = min(Normalized_Call_Price),
+    `Median C/K` = median(Normalized_Call_Price),
+    `Maximum C/K` = max(Normalized_Call_Price)
+  )
+
+options_summary_table <- options_summary |>
+  gt_compact(title = "Option contracts") |>
+  fmt_number(columns = c(`Minimum C/K`, `Median C/K`, `Maximum C/K`), decimals = 4)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+options_summary_table
+```
+:::
+
+## Training, validation, and test sets
+
+::: {.callout-caution collapse="false" title="Task"}
+Randomly allocate 60% of contracts to training, 20% to validation, and 20% to testing. Preserve the same split for every algorithm.
+:::
+
+```{r}
+#| label: split-data
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+
+set.seed(settings$seed)
+n <- nrow(options_data)
+shuffled_rows <- sample.int(n)
+n_train <- as.integer(n * settings$train_share)
+n_val <- as.integer(n * settings$validation_share)
+
+train_rows <- shuffled_rows[seq_len(n_train)]
+validation_rows <- shuffled_rows[n_train + seq_len(n_val)]
+test_rows <- shuffled_rows[-seq_len(n_train + n_val)]
+
+train_data <- options_data[train_rows, ]
+validation_data <- options_data[validation_rows, ]
+test_data <- options_data[test_rows, ]
+training_mean <- mean(train_data[[target]])
+
+stopifnot(
+  length(intersect(train_rows, validation_rows)) == 0L,
+  length(intersect(train_rows, test_rows)) == 0L,
+  length(intersect(validation_rows, test_rows)) == 0L,
+  length(c(train_rows, validation_rows, test_rows)) == n
+)
+
+split_table <- tibble(
+  Sample = c("Training", "Validation", "Test"),
+  Contracts = c(nrow(train_data), nrow(validation_data), nrow(test_data)),
+  Share = c(nrow(train_data), nrow(validation_data), nrow(test_data)) / n
+) |>
+  gt_compact(title = "Common data allocation") |>
+  fmt_percent(columns = Share, decimals = 0)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+split_table
+```
+:::
+
+::: {.callout-tip title="Question"}
+What are the roles of the training, validation, and test subsamples?
+
+Why shouldn't we use the test sample to select hyperparameters and then report the resulting test RMSE as an unbiased measure of predictive performance?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Training sample: Used to estimate model parameters, such as OLS coefficients, regression-tree splits, or neural-network weights.
+
+- Validation sample: Used to select hyperparameters, such as tree depth, number of boosting iterations, or neural-network complexity. We compare alternative configurations and select those that perform best on observations not used to estimate their parameters.
+
+- Test sample: Used to evaluate the final model's predictive performance on previously unseen observations, after all model-selection and tuning decisions are complete.
+
+Why not tune using the test sample?
+
+- Suppose we estimate several models with different hyperparameters and select the configuration with the lowest test RMSE.
+- That configuration may perform best partly because it happens to fit the particular random noise in the test sample. In effect, we have overfit our model-selection decisions to the test sample, even though we never directly estimated model parameters using those observations.
+- Consequently, the selected model's test RMSE will tend to be optimistically biased: it understates the prediction error we should expect on genuinely new observations.
+- By tuning with the validation sample and reserving the test sample for a single final evaluation, we preserve an independent assessment of the model's ability to generalize.
+
+The test sample must be held out not only from model estimation, but also from decisions about which model or hyperparameters to use.
+:::
+
+# Exploratory Data Analysis
+
+## Distributions
+
+::: {.callout-caution collapse="false" title="Task"}
+Summarize the distribution of option characteristics and normalized prices. Plot the dependent-variable distribution.
+:::
+
+```{r}
+#| label: option-eda-summary
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+#| fig-show: hide
+
+eda_summary <- train_data |>
+  select(all_of(c(predictors, target))) |>
+  pivot_longer(everything(), names_to = "Variable", values_to = "Value") |>
+  group_by(Variable) |>
+  summarise(
+    Observations = n(),
+    Mean = mean(Value),
+    SD = sd(Value),
+    Minimum = min(Value),
+    Median = median(Value),
+    Maximum = max(Value),
+    .groups = "drop"
+  )
+
+eda_summary_table <- eda_summary |>
+  gt_compact(title = "Training sample: summary statistics") |>
+  fmt_number(columns = c(Mean, SD, Minimum, Median, Maximum), decimals = 4)
+
+price_histogram <- ggplot(train_data, aes(x = Normalized_Call_Price)) +
+  geom_histogram(bins = 55, fill = "#43769B", color = "white") +
+  labs(
+    title = "Observed normalized call prices",
+    subtitle = "Training observations only",
+    x = "Normalized call price (C/K)", y = "Number of contracts"
+  )
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+eda_summary_table
+price_histogram
+```
+:::
+
+## Exploring potential nonlinear relationships
+
+::: {.callout-caution collapse="false" title="Task"}
+Plot option price against moneyness and volatility. Look for possible curvature, remembering that the other contract characteristics also vary across observations.
+:::
+
+```{r}
+#| label: eda-relationships
+#| code-fold: true
+#| code-summary: "Code"
+#| fig-show: hide
+
+set.seed(settings$seed)
+eda_sample <- train_data |>
+  slice_sample(n = min(5000L, nrow(train_data)))
+
+moneyness_plot <- ggplot(eda_sample, aes(Moneyness, Normalized_Call_Price)) +
+  geom_point(alpha = 0.18, size = 0.65, color = "#43769B") +
+  labs(
+    title = "Price and moneyness",
+    subtitle = "Other contract characteristics also vary",
+    x = "Moneyness (S/K)", y = "Observed C/K"
+  )
+
+volatility_plot <- ggplot(eda_sample, aes(Volatility, Normalized_Call_Price)) +
+  geom_point(alpha = 0.18, size = 0.65, color = "#43769B") +
+  labs(
+    title = "Price and volatility",
+    subtitle = "Other contract characteristics also vary",
+    x = "Annualized volatility", y = "Observed C/K"
+  )
+
+fixed_maturity <- median(train_data$Time_to_Maturity)
+fixed_rate <- median(train_data$Risk_Free_Rate)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+moneyness_plot
+volatility_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+Do these scatterplots establish the precise functional relationship between option characteristics and prices? Why should we be cautious about interpreting apparent curvature?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+No. Each scatterplot varies one predictor while the others also vary. The plots are useful for generating hypotheses about nonlinear relationships, but variation in other predictors and observational noise can obscure or exaggerate the patterns. We need fitted conditional models, residual diagnostics, and out-of-sample evaluation.
+:::
+
+# Modeling
+
+## OLS benchmark
+
+### Estimate and interpret a linear function
+
+The simplest regression imposes a straight-line relationship in each characteristic:
+
+$$
+Y_i=\beta_0+\beta_1 M_i+\beta_2\sigma_i+\beta_3 T_i+\beta_4 r_i+\varepsilon_i.
+$$
+
+::: {.callout-caution collapse="false" title="Task"}
+Estimate the OLS benchmark on the training sample. Report its coefficients and validation RMSE; then investigate whether its residuals are systematically related to moneyness.
+:::
+
+```{r}
+#| label: fit-ols
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+#| fig-show: hide
+
+ols_fit <- lm(
+  Normalized_Call_Price ~ Moneyness + Volatility +
+    Time_to_Maturity + Risk_Free_Rate,
+  data = train_data
+)
+
+ols_coefficients_table <- as_tibble(summary(ols_fit)$coefficients, rownames = "Term") |>
+  rename(
+    Estimate = Estimate,
+    `Std. error` = `Std. Error`,
+    `t statistic` = `t value`,
+    `p value` = `Pr(>|t|)`
+  ) |>
+  gt_compact(title = "OLS benchmark: estimated coefficients") |>
+  fmt_number(columns = where(is.numeric), decimals = 4)
+
+ols_validation_predictions <- as.numeric(predict(ols_fit, newdata = validation_data))
+ols_validation_rmse <- rmse(validation_data[[target]], ols_validation_predictions)
+
+ols_training_diagnostics <- train_data |>
+  mutate(
+    Fitted = as.numeric(predict(ols_fit, newdata = train_data)),
+    Residual = Normalized_Call_Price - Fitted
+  )
+
+ols_residual_plot <- ggplot(
+  ols_training_diagnostics,
+  aes(Moneyness, Residual)
+) +
+  geom_point(alpha = 0.08, size = 0.5, color = "#43769B") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "OLS residuals against moneyness",
+    x = "Moneyness (S/K)", y = "Observed minus fitted C/K"
+  )
+
+ols_validation_table <- tibble(
+  Model = "OLS", `Validation RMSE` = ols_validation_rmse
+) |>
+  gt_compact(title = "OLS validation performance") |>
+  fmt_number(columns = `Validation RMSE`, decimals = 5)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ols_coefficients_table
+ols_validation_table
+ols_residual_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+- Interpret the coefficient on `Volatility`, *holding the other predictors fixed*.
+
+- Would an economically sensible sign for this coefficient establish that OLS has correctly specified the pricing function?
+
+- Would adding $M^2$ make the regression nonlinear in the parameters?
+
+- What does the plot of the OLS residuals suggest?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- The coefficient is the estimated change in normalized call price for a one-unit increase in annualized volatility (for example, from 0.20 to 1.20), holding moneyness, maturity, and the rate fixed. For a 0.01 increase, multiply the coefficient by 0.01.
+- No. The sign is one aspect of the economic relationship; a model with a constant volatility slope can still miss a curved relationship. Examine the conditional residual pattern and out-of-sample error.
+- No. Adding a squared predictor preserves linearity in the unknown coefficients. Linear regression means linear in the coefficients, not necessarily linear in the raw predictors.
+- Ther curvature in the residual plot suggests some type of omitted nonlinearity.
+:::
+
+### Partial dependence: the shape OLS imposes
+
+A partial dependence plot (PDP) varies one predictor and averages the fitted predictions over a common set of observed values for the others. For moneyness,
+
+$$
+PD_{\mathrm{OLS}}(m)=\frac{1}{n_{\mathrm{ref}}}\sum_{i=1}^{n_{\mathrm{ref}}}
+\widehat f_{\mathrm{OLS}}(m,\sigma_i,T_i,r_i).
+$$
+
+::: {.callout-caution collapse="false" title="Task"}
+Construct the OLS moneyness PDP by averaging predictions over 220 training contracts. Save the reference observations and moneyness grid so the GAM can be evaluated on precisely the same basis.
+:::
+
+```{r}
+#| label: ols-moneyness-pdp
+#| code-fold: true
+#| code-summary: "Code"
+#| fig-show: hide
+
+set.seed(settings$seed + 202L)
+pdp_reference <- train_data[
+  sample.int(nrow(train_data), min(settings$pdp_reference_n, nrow(train_data))),
+  predictors, drop = FALSE
+]
+m_range <- as.numeric(quantile(train_data$Moneyness, c(0.01, 0.99)))
+moneyness_grid <- seq(m_range[1], m_range[2],
+                      length.out = settings$pdp_points)
+
+# Common PDP calculation, reused below for the additive GAM.
+moneyness_pdp <- function(predict_fun, model_name) {
+  purrr::map_dfr(moneyness_grid, function(moneyness_value) {
+    modified_data <- pdp_reference
+    modified_data$Moneyness <- moneyness_value
+    tibble(
+      Model = model_name,
+      Moneyness = moneyness_value,
+      PDP = mean(as.numeric(predict_fun(modified_data)))
+    )
+  })
+}
+
+ols_moneyness_pdp <- moneyness_pdp(
+  function(d) predict(ols_fit, newdata = d), "OLS"
+)
+
+ols_moneyness_pdp_plot <- ggplot(ols_moneyness_pdp, aes(Moneyness, PDP)) +
+  geom_line(color = "#43769B", linewidth = 1) +
+  labs(
+    title = "OLS: partial dependence of moneyness",
+    subtitle = "Average fitted predictions over a common training reference sample",
+    x = "Moneyness (S/K)", y = "Partial dependence: predicted C/K"
+  )
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+ols_moneyness_pdp_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+Why is the OLS PDP straight even if the OLS residual plot suggests curvature? What does each plot tell us?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+The PDP shows the relationship **implied by the fitted model**; OLS imposes a constant slope.
+
+The residual plot compares observed prices with those fitted values.
+
+Systematic residual curvature is evidence that the imposed straight-line relationship may be inadequate, although it does not reveal the exact true function.
+:::
+
+## Generalized Additive Models
+
+### Nonlinear *additive* effects
+
+A generalized additive model estimates a smooth effect for each predictor:
+
+$$
+Y_i=\beta_0+f_1(M_i)+f_2(\sigma_i)+f_3(T_i)+f_4(r_i)+\varepsilon_i.
+$$
+
+Unlike OLS with only linear terms, the functions $f_j$ can curve. The model retains an additive structure, but each predictor can have its own curved fitted contribution.
+
+::: {.callout-caution collapse="false" title="Task"}
+Fit an additive GAM using penalized splines. Report validation RMSE and graph its four estimated smooth contributions.
+:::
+
+```{r}
+#| label: fit-additive-gam
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+#| fig-show: hide
+
+gam_add_fit <- mgcv::gam(
+  Normalized_Call_Price ~
+    s(Moneyness, bs = "cr", k = 10) +
+    s(Volatility, bs = "cr", k = 10) +
+    s(Time_to_Maturity, bs = "cr", k = 10) +
+    s(Risk_Free_Rate, bs = "cr", k = 10),
+  data = train_data,
+  method = "REML"
+)
+
+gam_add_validation <- as.numeric(predict(gam_add_fit, newdata = validation_data))
+gam_add_validation_rmse <- rmse(validation_data[[target]], gam_add_validation)
+
+# predict(type = "terms") gives centered smooth contributions, not full prices.
+partial_smooth <- function(model, feature) {
+  grid <- as.data.frame(lapply(train_data[predictors], median))
+  grid <- grid[rep(1L, 101L), , drop = FALSE]
+  grid[[feature]] <- seq(
+    min(train_data[[feature]]), max(train_data[[feature]]), length.out = 101
+  )
+  terms_result <- predict(model, newdata = grid, type = "terms", se.fit = TRUE)
+  term_name <- paste0("s(", feature, ")")
+  stopifnot(term_name %in% colnames(terms_result$fit))
+  tibble(
+    Variable = feature,
+    Value = grid[[feature]],
+    Effect = as.numeric(terms_result$fit[, term_name]),
+    SE = as.numeric(terms_result$se.fit[, term_name])
+  )
+}
+
+gam_smooth_data <- purrr::map_dfr(predictors, ~ partial_smooth(gam_add_fit, .x))
+
+gam_smooth_plot <- ggplot(gam_smooth_data, aes(Value, Effect)) +
+  geom_ribbon(aes(ymin = Effect - 1.96 * SE, ymax = Effect + 1.96 * SE),
+              alpha = 0.18, fill = "#43769B") +
+  geom_line(linewidth = 0.9, color = "#43769B") +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "gray50") +
+  facet_wrap(~ Variable, scales = "free_x", ncol = 2) +
+  labs(
+    title = "Additive GAM: estimated smooth contributions",
+    subtitle = "Centered contributions to predicted C/K (not standalone prices)",
+    x = "Predictor value", y = "Partial contribution to predicted C/K"
+  )
+
+gam_add_validation_table <- tibble(
+  Model = c("OLS", "Additive GAM"),
+  `Validation RMSE` = c(ols_validation_rmse, gam_add_validation_rmse)
+) |>
+  gt_compact(title = "Initial validation comparison") |>
+  fmt_number(columns = `Validation RMSE`, decimals = 5)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+gam_add_validation_table
+gam_smooth_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+Compare the estimated GAM smooths with the earlier OLS results. What do the shapes reveal about the relationship between each predictor and normalized option price? In particular, how does the relationship with moneyness differ from the straight-line PDP implied by OLS? Why are the displayed smooth contributions not standalone predicted option prices?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Moneyness: The GAM reveals a strongly nonlinear, increasing relationship. In contrast to the straight-line PDP under OLS, the slope becomes progressively steeper as moneyness increases. This suggests that the constant marginal effect imposed by OLS is inadequate.
+- Volatility: The contribution increases with volatility and exhibits modest curvature, indicating that its marginal effect is not constant.
+- Time to maturity: The contribution increases but gradually flattens, suggesting diminishing marginal effects.
+- Risk-free rate: The estimated contribution is relatively small and approximately linear over the observed range.
+
+Interpretation: Unlike OLS, which imposes a constant slope for each predictor, the GAM allows marginal effects to vary with predictor values. The estimated smooths suggest that this flexibility is particularly important for moneyness.
+
+Why aren't these predicted prices? GAM smooths are centered for identification and represent individual predictors' partial contributions. The complete fitted normalized option price combines the intercept and all four smooth contributions.
+:::
+
+### Revisiting moneyness: OLS versus GAM
+
+We now revisit the same moneyness PDP, using the **same grid and the same 220 training reference contracts**. The GAM can learn a curved moneyness effect, while OLS was restricted to a straight line. We also compare the two models' training residuals: if the GAM captures curvature missed by OLS, the systematic residual pattern should be reduced.
+
+::: {.callout-caution collapse="false" title="Task"}
+Overlay the OLS and additive-GAM moneyness PDPs. Then compare their residuals against moneyness using identical axes. Relate the shapes to the validation RMSE comparison above.
+:::
+
+```{r}
+#| label: compare-ols-gam-nonlinearity
+#| code-fold: true
+#| code-summary: "Code"
+#| fig-show: hide
+
+gam_moneyness_pdp <- moneyness_pdp(
+  function(d) predict(gam_add_fit, newdata = d), "Additive GAM"
+)
+
+ols_gam_moneyness_pdp <- bind_rows(
+  ols_moneyness_pdp, gam_moneyness_pdp
+) |>
+  mutate(Model = factor(Model, levels = c("OLS", "Additive GAM")))
+
+ols_gam_moneyness_pdp_plot <- ggplot(
+  ols_gam_moneyness_pdp, aes(Moneyness, PDP, color = Model)
+) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = c("OLS" = "#A0443F", "Additive GAM" = "#43769B")) +
+  labs(
+    title = "Moneyness partial dependence: OLS versus additive GAM",
+    subtitle = "Same reference contracts and grid; curves describe the fitted models",
+    x = "Moneyness (S/K)", y = "Partial dependence: predicted C/K",
+    color = NULL
+  )
+
+gam_training_diagnostics <- train_data |>
+  mutate(
+    Fitted = as.numeric(predict(gam_add_fit, newdata = train_data)),
+    Residual = Normalized_Call_Price - Fitted
+  )
+
+ols_gam_residuals <- bind_rows(
+  ols_training_diagnostics |> mutate(Model = "OLS"),
+  gam_training_diagnostics |> mutate(Model = "Additive GAM")
+) |>
+  mutate(Model = factor(Model, levels = c("OLS", "Additive GAM")))
+
+ols_gam_residual_plot <- ggplot(ols_gam_residuals, aes(Moneyness, Residual)) +
+  geom_point(alpha = 0.08, size = 0.5, color = "#43769B") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  facet_wrap(~ Model, ncol = 2) +
+  labs(
+    title = "Residual patterns: OLS versus additive GAM",
+    subtitle = "Common axes; the curved smooth indicates systematic remaining errors",
+    x = "Moneyness (S/K)", y = "Observed minus fitted C/K"
+  )
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 11
+#| fig-height: 5
+ols_gam_moneyness_pdp_plot
+ols_gam_residual_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+- How has the learned moneyness relationship changed from OLS to the GAM?
+- Has the systematic curvature in the residual plot diminished? Does that mean the GAM has necessarily recovered the true pricing function?
+- Does the GAM's validation RMSE support the improvement suggested by these visual diagnostics?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- OLS imposes a straight PDP; the GAM allows the fitted moneyness response to curve. Both plots describe model predictions, not the unknown truth.
+- A reduction in systematic residual curvature suggests that the GAM captures nonlinear structure missed by OLS. It does not establish that the GAM is the correct pricing function or that all remaining structure has been modeled.
+- The common validation RMSE comparison provides complementary out-of-sample evidence. Improved training residual patterns alone do not guarantee better generalization.
+:::
+
+## Regression Trees and Random Forest
+
+### Regression Tree
+
+A regression tree repeatedly divides the data into regions according to predictor thresholds. Each terminal region predicts the average training response among observations in that region. A tree can learn thresholds and interactions, but its predictions are piecewise constant and individual trees can be unstable.
+
+::: {.callout-caution collapse="false" title="Task"}
+Fit a deliberately small regression tree to predict normalized call prices.
+
+Unlike OLS or a GAM, which estimate coefficients or smooth functions, a regression tree constructs a prediction function by repeatedly partitioning the predictor space.
+
+Our regression tree estimates:
+
+$$
+\widehat{C/K}
+=
+\hat f_{\text{tree}}(M,\sigma,T,r),
+$$
+
+where:
+
+- $M=S/K$: Moneyness
+- $\sigma$: Volatility
+- $T$: Time to maturity (years)
+- $r$: Risk-free interest rate
+
+**1. Fit and visualize the tree.** Restrict its maximum depth to 3 to make the resulting structure easy to interpret. Report validation RMSE and the number of terminal nodes.
+
+**2. Trace a prediction.** Consider a contract with the following characteristics:
+
+| Predictor              | Value |
+|------------------------|------:|
+| Moneyness ($M$)        |  1.10 |
+| Volatility ($\sigma$)  |  0.30 |
+| Time to maturity ($T$) |  1.00 |
+| Risk-free rate ($r$)   |  0.03 |
+
+Starting at the root node, follow the splitting rules until the contract reaches a terminal node. What normalized call price does the tree predict?
+
+**3. Interpret the prediction.** Why would another contract with somewhat different characteristics receive exactly the same prediction? How does this differ from the predictions generated by OLS or a GAM?
+:::
+
+```{r}
+#| label: fit-single-tree
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+#| fig-show: hide
+
+tree_fit <- rpart::rpart(
+  Normalized_Call_Price ~ Moneyness + Volatility +
+    Time_to_Maturity + Risk_Free_Rate,
+  data = train_data,
+  method = "anova",
+  control = rpart.control(
+    maxdepth = 3L, minsplit = 200L, minbucket = 75L,
+    cp = 0, xval = 0L
+  )
+)
+
+tree_validation <- as.numeric(predict(tree_fit, newdata = validation_data))
+tree_validation_rmse <- rmse(validation_data[[target]], tree_validation)
+
+tree_validation_table <- tibble(
+  Model = "Single regression tree",
+  `Validation RMSE` = tree_validation_rmse,
+  `Terminal nodes` = sum(tree_fit$frame$var == "<leaf>")
+) |>
+  gt_compact(title = "A deliberately small tree") |>
+  fmt_number(columns = `Validation RMSE`, decimals = 5)
+
+# Use a real held-out validation contract as the worked example.
+worked_contract <- tibble(
+  Moneyness = 1.10,
+  Volatility = 0.30,
+  Time_to_Maturity = 1.00,
+  Risk_Free_Rate = 0.03
+)
+
+worked_prediction <- as.numeric(
+  predict(tree_fit, newdata = worked_contract)
+)
+worked_contract_table <- worked_contract |>
+  mutate(`Tree prediction` = worked_prediction) |>
+  gt_compact(title = "Trace this option through the displayed tree") |>
+  fmt_number(columns = where(is.numeric), decimals = 4)
+
+# rpart.plot draws directly, so put its rendering in the Output callout below.
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+tree_validation_table
+worked_contract_table
+rpart.plot::rpart.plot(
+  tree_fit, type = 2, extra = 1, fallen.leaves = TRUE,
+  box.palette = "Blues", cex = 0.8,
+  main = "Small regression tree: follow the split rules"
+)
+```
+:::
+
+::: {.callout-tip title="Question"}
+Use the displayed tree to trace the contract in the table from the root to its terminal node. If we changed an input slightly but did not cross any splitting threshold, would the fitted prediction change? What if it crossed a threshold?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+For the contract with $M=1.10$, $\sigma=0.30$, $T=1.00$, and $r=0.03$:
+
+1.  Root node: Moneyness exceeds the splitting threshold of approximately 1.00. Move right.
+2.  Second split: Moneyness is below 1.20. Move left.
+3.  Third split: Time to maturity is 1.00, so follow the right branch to the terminal node.
+
+Interpretation of the terminal node:
+
+- 0.22: The predicted normalized call price is $\widehat{C/K}\approx 0.22$. This means the predicted call price is approximately 22% of the strike price. For example, if $K=\$100$, the predicted option price is approximately $\$22$.
+- n = 2304: There are 2,304 training observations assigned to this terminal node. The prediction of 0.22 is the average normalized call price among these observations.
+- Why the same prediction? Every contract reaching this terminal node receives the same predicted normalized price, regardless of differences in its characteristics within that region.
+
+What happens if an input changes?
+
+- Without crossing a splitting threshold: The contract remains in the same terminal node, so its prediction stays at approximately 0.22.
+- Crossing a splitting threshold: The contract may reach a different terminal node and receive a different prediction.
+
+Key insight: A regression tree estimates a *piecewise-constant function*. Unlike OLS or a GAM, its predictions change discretely at splitting boundaries rather than continuously as predictor values change.
+:::
+
+### Random Forest
+
+The small regression tree assigned each contract to a terminal region and predicted the mean normalized call price within that region. A Random Forest constructs many different trees and **averages their numerical predictions**, not their splitting rules:
+
+$$
+\widehat f_{\mathrm{RF}}(x)=\frac{1}{B}\sum_{b=1}^{B}\widehat f_b(x),
+\qquad x=(M,\sigma,T,r).
+$$
+
+We use $B=300$ trees. They differ because **bagging** trains each tree on a bootstrap sample of the training contracts, while **random feature selection** considers only two of the four predictors as candidates at each split (`mtry = 2`). These sources of variation make the trees less alike, so averaging can reduce the instability of any one tree. Unlike the deliberately shallow tree above, the individual forest trees are not restricted to depth three.
+
+::: {.callout-caution collapse="false" title="Task"}
+Fit a Random Forest with 300 trees and `mtry = 2`. As a limited tuning exercise, compare minimum node sizes of 5 and 20 using validation RMSE; retain the better forest without displaying a separate tuning table. Use the parameters already defined in `settings`.
+:::
+
+```{r}
+#| label: fit-random-forest
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+
+forest_training <- train_data |>
+  select(all_of(c(predictors, target)))
+
+forest_candidates <- purrr::map(settings$forest_min_nodes, function(node_size) {
+  fit <- ranger::ranger(
+    dependent.variable.name = target,
+    data = forest_training,
+    num.trees = settings$forest_trees,
+    mtry = 2L,
+    min.node.size = node_size,
+    replace = TRUE,
+    importance = "none",  # Common permutation importance comes later.
+    seed = settings$seed,
+    num.threads = 1L
+  )
+  val_prediction <- predict(fit, data = validation_data)$predictions
+  list(
+    min_node_size = node_size,
+    fit = fit,
+    validation_rmse = rmse(validation_data[[target]], val_prediction)
+  )
+})
+
+forest_selection <- purrr::map_dfr(forest_candidates, function(candidate) {
+  tibble(
+    `Minimum node size` = candidate$min_node_size,
+    `Validation RMSE` = candidate$validation_rmse
+  )
+})
+selected_forest_index <- which.min(forest_selection$`Validation RMSE`)
+forest_fit <- forest_candidates[[selected_forest_index]]$fit
+forest_validation_rmse <- forest_candidates[[selected_forest_index]]$validation_rmse
+selected_forest_node_size <- forest_candidates[[selected_forest_index]]$min_node_size
+```
+
+#### How does a forest predict the same contract?
+
+Recall the option from the single-tree exercise: $M=1.10$, $\sigma=0.30$, $T=1.00$, and $r=0.03$. The small tree predicted approximately $0.22$ for this contract. A forest has no single terminal node for it: **each of its 300 trees routes the contract separately**, then the forest averages the resulting 300 predictions.
+
+::: {.callout-caution collapse="false" title="Task"}
+Use this contract as an input to the small tree and the selected Random Forest. Extract the prediction from **each** of the forest's 300 trees. Plot their distribution, mark their mean, and report the two models' predictions for the contract. Confirm that the mean of the individual-tree predictions equals the forest's prediction.
+:::
+
+```{r}
+#| label: forest-contract-predictions
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+#| fig-show: hide
+
+forest_contract <- tibble(
+  Moneyness = 1.10,
+  Volatility = 0.30,
+  Time_to_Maturity = 1.00,
+  Risk_Free_Rate = 0.03
+)
+
+small_tree_contract_prediction <- as.numeric(
+  predict(tree_fit, newdata = forest_contract)
+)
+
+# For regression, predict.all returns a row-by-tree matrix.
+forest_tree_predictions <- as.numeric(
+  predict(forest_fit, data = forest_contract, predict.all = TRUE)$predictions
+)
+forest_contract_prediction <- as.numeric(
+  predict(forest_fit, data = forest_contract)$predictions
+)
+
+stopifnot(
+  length(forest_tree_predictions) == settings$forest_trees,
+  isTRUE(all.equal(
+    mean(forest_tree_predictions), forest_contract_prediction,
+    tolerance = 1e-10
+  ))
+)
+
+forest_contract_table <- tibble(
+  Model = c("Small regression tree", "Random Forest (300 trees)"),
+  `Predicted C/K` = c(
+    small_tree_contract_prediction, forest_contract_prediction
+  )
+) |>
+  gt_compact(title = "Two predictions for the same contract") |>
+  fmt_number(columns = `Predicted C/K`, decimals = 4)
+
+forest_tree_prediction_plot <- ggplot(
+  tibble(Prediction = forest_tree_predictions), aes(x = Prediction)
+) +
+  geom_histogram(bins = 25, fill = "#43769B", color = "white") +
+  geom_vline(
+    xintercept = forest_contract_prediction,
+    color = "#A0443F", linetype = "dashed", linewidth = 1
+  ) +
+  labs(
+    title = "How 300 individual trees predict the same option",
+    subtitle = paste0(
+      "Dashed line = forest average = ",
+      sprintf("%.4f", forest_contract_prediction)
+    ),
+    x = "Predicted normalized call price (C/K)",
+    y = "Number of trees"
+  )
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 9
+#| fig-height: 4.5
+forest_contract_table
+forest_tree_prediction_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+- Why do the 300 trees give different predictions for the **same** contract? How does the forest convert those predictions into one predicted price?
+- How does the forest's prediction compare with the small tree's prediction? Does the spread of the 300 tree predictions constitute a confidence or prediction interval?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- The trees use different bootstrap samples and randomized subsets of candidate split variables. They can therefore create different partitions and terminal-node averages, even for the same contract. The forest averages their predicted prices, rather than selecting a particular terminal node from a common tree.
+- The small tree predicts `r sprintf("%.4f", small_tree_contract_prediction)` and the forest predicts `r sprintf("%.4f", forest_contract_prediction)` in units of $C/K$. Each forest tree contributes one number to the average. For example, a prediction of $0.22$ represents a call price equal to approximately 22% of the strike, or $\$22$ for a $\$100$ strike.
+- The spread shows disagreement among randomized fitted trees. These predictions are dependent, and their empirical distribution is **not** a calibrated confidence interval for the conditional mean or a prediction interval for an observed option price.
+:::
+
+#### From large steps to many smaller steps
+
+A single tree produces a piecewise-constant function: its prediction changes when a contract crosses one of its split thresholds. A forest averages trees with different thresholds, potentially approximating a curved pricing relationship through many smaller steps. **A finite forest is still piecewise constant**, even if its plotted curve looks nearly smooth.
+
+::: {.callout-caution collapse="false" title="Task"}
+Vary moneyness over its central training-sample range while holding volatility at 0.30, maturity at 1 year, and the interest rate at 0.03. Plot the fitted functions from the small tree and the selected forest on the **same vertical scale**. Mark $M=1.10$ to connect the figure to the worked contract.
+:::
+
+```{r}
+#| label: forest-versus-tree-curves
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+#| fig-show: hide
+
+forest_curve_grid <- tibble(
+  Moneyness = seq(m_range[1], m_range[2],
+                  length.out = settings$curve_points),
+  Volatility = 0.30,
+  Time_to_Maturity = 1.00,
+  Risk_Free_Rate = 0.03
+)
+
+forest_curve_predictions <- forest_curve_grid |>
+  transmute(
+    Moneyness,
+    `Single regression tree` = as.numeric(
+      predict(tree_fit, newdata = forest_curve_grid)
+    ),
+    `Random Forest` = as.numeric(
+      predict(forest_fit, data = forest_curve_grid)$predictions
+    )
+  ) |>
+  pivot_longer(
+    cols = -Moneyness, names_to = "Model", values_to = "Predicted"
+  ) |>
+  mutate(Model = factor(
+    Model, levels = c("Single regression tree", "Random Forest")
+  ))
+
+forest_curve_plot <- ggplot(
+  forest_curve_predictions, aes(x = Moneyness, y = Predicted)
+) +
+  geom_step(color = "#43769B", linewidth = 0.9) +
+  geom_vline(xintercept = 1.10, color = "#A0443F", linetype = "dotted") +
+  facet_wrap(~ Model, ncol = 2, scales = "fixed") +
+  labs(
+    title = "One tree versus an average of 300 trees",
+    subtitle = paste0(
+      "Volatility = 0.30, maturity = 1 year, rate = 0.03; ",
+      "dotted line: M = 1.10"
+    ),
+    x = "Moneyness (S/K)",
+    y = "Predicted normalized call price (C/K)"
+  )
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 11
+#| fig-height: 5
+forest_curve_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+- Compare the number and size of the jumps in the two fitted functions. Why can averaging many trees produce a much closer visual approximation to a curved relationship?
+- If moneyness changes a little without crossing **any** split threshold in **any** tree, must the forest prediction change? Is the forest mathematically smooth?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- The small tree has relatively few terminal regions, so its fitted price has large flat segments and a few conspicuous jumps. Forest trees split at different locations. Averaging their predictions typically creates more numerous, smaller changes, helping approximate a curved relationship.
+- If none of the trees changes terminal nodes, every individual-tree prediction stays constant, and so does their average. An ordinary finite Random Forest is still a piecewise-constant function, not a mathematically smooth one. The displayed steps are sampled on a finite grid and may not show every split boundary.
+:::
+
+#### Does the forest improve validation accuracy?
+
+::: {.callout-caution collapse="false" title="Task"}
+Compare validation RMSE for the deliberately small tree and the forest selected using the two candidate node sizes. Report the forest's chosen node size.
+:::
+
+```{r}
+#| label: compare-tree-forest-validation
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+
+forest_vs_tree_validation <- tibble(
+  Model = c("Small regression tree", "Random Forest (300 trees)"),
+  `Validation RMSE` = c(tree_validation_rmse, forest_validation_rmse)
+)
+
+forest_vs_tree_validation_table <- forest_vs_tree_validation |>
+  gt_compact(title = "Validation: one small tree versus a forest") |>
+  fmt_number(columns = `Validation RMSE`, decimals = 5)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+forest_vs_tree_validation_table
+```
+
+The selected Random Forest uses a minimum node size of `r selected_forest_node_size`.
+:::
+
+::: {.callout-tip title="Question"}
+- Which model has lower validation RMSE? How does averaging trees help reduce prediction instability?
+- Can we attribute the full difference in validation RMSE to averaging alone?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- The small tree has validation RMSE `r sprintf("%.5f", tree_validation_rmse)`; the forest has `r sprintf("%.5f", forest_validation_rmse)`. `r if (forest_validation_rmse < tree_validation_rmse) "The forest performs better on these validation contracts." else if (forest_validation_rmse > tree_validation_rmse) "The small tree performs better on these validation contracts." else "Their validation RMSEs are equal at the computed precision."` Averaging trees with imperfectly correlated errors can make predictions less sensitive to any particular training sample or set of splits.
+- Can we attribute the full difference in validation RMSE to averaging alone? -- No. Our comparison also changes model complexity: the original tree was deliberately restricted to a depth of three, while the trees in the forest can grow deeper. The validation difference therefore reflects both the flexibility of the constituent trees and the benefits of averaging. The later common test-set comparison provides a separate assessment of generalization.
+:::
+
+## Gradient Boosting
+
+A boosted-tree model is also an ensemble, but its trees are built sequentially rather than trained as parallel randomized alternatives. Each additional tree contributes an adjustment to the existing fitted function:
+
+$$
+\widehat f_B(X)=\widehat f_0(X)+\eta\sum_{b=1}^B h_b(X),
+$$
+
+where $\widehat f_0$ is an initial prediction, $h_b$ is a fitted tree contribution, and $\eta$ is the learning rate. For squared-error loss, successive trees can be motivated as corrections to prediction residuals. A small learning rate typically requires more trees.
+
+::: {.callout-caution collapse="false" title="Task"}
+Fit gradient-boosted trees using a modest depth and learning rate. Use the validation set for early stopping; then refit the chosen number of rounds using only the training sample. Examine the learning curve and predictor importance.
+:::
+
+```{r}
+#| label: fit-boosting
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+#| fig-show: hide
+#| warning: false
+
+x_train <- feature_matrix(train_data)
+x_validation <- feature_matrix(validation_data)
+
+dtrain <- xgboost::xgb.DMatrix(data = x_train, label = train_data[[target]])
+dvalidation <- xgboost::xgb.DMatrix(
+  data = x_validation, label = validation_data[[target]]
+)
+
+xgb_parameters <- list(
+  objective = "reg:squarederror",
+  eval_metric = "rmse",
+  max_depth = settings$xgb_max_depth,
+  eta = settings$xgb_learning_rate,
+  subsample = 0.90,
+  colsample_bytree = 1.00,
+  nthread = 1L,
+  seed = settings$seed
+)
+
+# Validation outcomes enter the early-stopping decision only.
+xgb_tuning_fit <- xgboost::xgb.train(
+  params = xgb_parameters,
+  data = dtrain,
+  nrounds = settings$xgb_max_rounds,
+  evals = list(training = dtrain, validation = dvalidation),
+  early_stopping_rounds = 25L,
+  verbose = 0
+)
+
+# The evaluation log lives on the object in older xgboost and as an attribute
+# in xgboost >= 2.0, where the model is a C++ handle. Read it either way.
+boosting_log <- xgb_tuning_fit$evaluation_log
+if (is.null(boosting_log)) {
+  boosting_log <- attr(xgb_tuning_fit, "evaluation_log")
+}
+boosting_log <- as_tibble(boosting_log)
+
+# Derive the early-stopping round directly from the minimum validation RMSE.
+# This matches xgboost's selection and avoids the 0- vs 1-indexing differences
+# of best_iteration across versions.
+best_boosting_round <- boosting_log$iter[which.min(boosting_log$validation_rmse)]
+stopifnot(length(best_boosting_round) == 1L, is.finite(best_boosting_round))
+
+# Refit an ordinary fixed-length model so predictions use exactly that number
+# of boosting iterations, regardless of installed xgboost version.
+xgb_fit <- xgboost::xgb.train(
+  params = xgb_parameters,
+  data = dtrain,
+  nrounds = best_boosting_round,
+  verbose = 0
+)
+
+xgb_validation <- as.numeric(predict(xgb_fit, newdata = dvalidation))
+xgb_validation_rmse <- rmse(validation_data[[target]], xgb_validation)
+
+boosting_history <- boosting_log |>
+  pivot_longer(
+    cols = c(training_rmse, validation_rmse),
+    names_to = "Sample", values_to = "RMSE"
+  ) |>
+  mutate(Sample = recode(
+    Sample,
+    training_rmse = "Training",
+    validation_rmse = "Validation"
+  ))
+
+boosting_curve <- ggplot(boosting_history, aes(iter, RMSE, color = Sample)) +
+  geom_line(linewidth = 0.9) +
+  geom_vline(xintercept = best_boosting_round, linetype = "dashed") +
+  labs(
+    title = "Boosting: training and validation error",
+    subtitle = paste("Dashed line: selected", best_boosting_round, "boosting rounds"),
+    x = "Boosting iteration", y = "RMSE"
+  )
+
+boosting_importance <- xgboost::xgb.importance(
+  feature_names = predictors, model = xgb_fit
+) |>
+  as_tibble()
+
+boosting_importance_plot <- ggplot(
+  boosting_importance,
+  aes(reorder(Feature, Gain), Gain)
+) +
+  geom_col(fill = "#43769B") +
+  coord_flip() +
+  labs(
+    title = "Boosting: relative gain importance",
+    subtitle = "Importance measure differs from the forest's permutation importance",
+    x = NULL, y = "Share of model gain"
+  )
+
+boosting_validation_table <- tibble(
+  `Selected rounds` = best_boosting_round,
+  `Validation RMSE` = xgb_validation_rmse
+) |>
+  gt_compact(title = "Boosted-tree configuration") |>
+  fmt_number(columns = `Validation RMSE`, decimals = 5)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+boosting_curve
+```
+:::
+
+::: {.callout-tip title="Question"}
+Each boosting iteration adds another tree to the model. How does increasing the number of iterations affect the complexity of the fitted function? What are the potential benefits and costs of this increased complexity? How do training and validation RMSE help us determine when to stop adding trees? Interpret the results in the figure.
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Increasing model complexity: Boosting begins with a simple prediction function and sequentially adds trees that correct errors in the current model. With more iterations, the fitted function becomes increasingly flexible, allowing it to capture more complicated nonlinear relationships.
+- Benefit of additional trees: Initially, additional trees can reduce underfitting (bias) by capturing systematic relationships that earlier trees missed. Consequently, both training and validation RMSE generally decline.
+- Cost of additional trees: As the model becomes more flexible, it may begin fitting idiosyncratic noise rather than meaningful relationships. Training RMSE can continue declining while validation RMSE increases, indicating overfitting (increased variance).
+- Choosing the number of iterations: We use validation RMSE to balance these competing effects. Early stopping limits complexity when additional trees no longer improve validation performance.
+- Our results: Both training and validation RMSE decline rapidly at first, then flatten considerably. This suggests diminishing benefits from additional complexity, with little evidence of overfitting. However, the lowest validation RMSE occurs at the maximum of 1,000 rounds, so early stopping has not identified an interior optimum. Additional rounds might improve performance slightly.
+
+Key insight The number of boosting iterations controls model complexity. Too few trees may underfit; too many may overfit. The objective is not to minimize training error, but to select a level of complexity that produces the best predictions on unseen data.
+:::
+
+## Neural Networks
+
+A feedforward neural network combines inputs into hidden units, applies nonlinear activation functions, and combines those transformed quantities into a prediction. Even a single hidden layer can represent nonlinear effects and interactions.
+
+For example, one hidden unit may compute
+
+$$
+h_j(X)=g\!\left(w_{0j}+\sum_{k=1}^{4}w_{kj}X_k\right),
+$$
+
+where $g$ is a nonlinear activation function. A regression output can then take the form
+
+$$
+\widehat Y=a_0+\sum_{j=1}^{H}a_j h_j(X).
+$$
+
+We choose weights to reduce training prediction error. Because the hidden units depend on combinations of inputs, their effects need not be additive in the original predictors.
+
+### Network architecture
+
+::: {.callout-caution collapse="false" title="Task"}
+Examine the architecture of a feedforward neural network with four inputs, one hidden layer containing five neurons, and a single output representing predicted normalized call price.
+:::
+
+```{r}
+#| label: neural-network-diagram
+#| code-fold: true
+#| code-summary: "Code"
+#| fig-show: hide
+
+# Construct a simple, package-light schematic with ggplot2.
+network_nodes <- bind_rows(
+  tibble(Layer = "Input", x = 0, y = 1:4,
+         Label = c("M", "Volatility", "Maturity", "Rate")),
+  tibble(Layer = "Hidden", x = 1, y = seq(0.7, 4.3, length.out = 5),
+         Label = paste0("h", 1:5)),
+  tibble(Layer = "Output", x = 2, y = 2.5, Label = "Predicted C/K")
+)
+network_edges <- tidyr::crossing(
+  Input = seq_len(4), Hidden = seq_len(5)
+) |>
+  transmute(
+    x = 0, y = network_nodes$y[Input],
+    xend = 1, yend = network_nodes$y[4 + Hidden]
+  ) |>
+  bind_rows(tibble(
+    x = rep(1, 5), y = network_nodes$y[5:9],
+    xend = rep(2, 5), yend = rep(2.5, 5)
+  ))
+
+network_plot <- ggplot() +
+  geom_segment(
+    data = network_edges,
+    aes(x = x, y = y, xend = xend, yend = yend),
+    color = "gray75", linewidth = 0.55
+  ) +
+  geom_point(
+    data = network_nodes, aes(x, y),
+    size = 7, color = "#43769B", shape = 21, fill = "#D9E9F4"
+  ) +
+  geom_text(
+    data = network_nodes, aes(x, y, label = Label),
+    hjust = -0.2, vjust = -1, size = 3.3
+  ) +
+  scale_x_continuous(breaks = 0:2, labels = c("Inputs", "Hidden layer", "Output")) +
+  coord_cartesian(xlim = c(-0.2, 2.8), ylim = c(0, 5.2), clip = "off") +
+  labs(title = "A small feedforward neural network", x = NULL, y = NULL) +
+  theme(
+    axis.text.y = element_blank(), axis.ticks = element_blank(),
+    panel.grid = element_blank()
+  )
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 11
+#| fig-height: 5
+network_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+How does the network transform the four predictors into a predicted option price? What role do the five hidden neurons play? How does this structure differ from the additive GAM estimated earlier?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Inputs: The network receives the same four predictors used in our previous models: moneyness, volatility, time to maturity, and the risk-free rate.
+- Hidden neurons: Each of the five neurons receives all four inputs, calculates a weighted combination of them, and applies a nonlinear activation function. Each neuron therefore learns a potentially different nonlinear transformation of the predictors.
+- Output: The network combines the five hidden-neuron outputs, using another set of learned weights, to produce a single predicted normalized call price.
+- Comparison with GAM: Our additive GAM estimates a separate smooth function for each predictor and adds their contributions. In contrast, each hidden neuron can combine multiple predictors before applying its nonlinear transformation. This allows the network to learn more complex relationships, including interactions among predictors.
+
+Key insight Both GAMs and neural networks can capture nonlinear relationships. However, the GAM explicitly models separate nonlinear contributions from each predictor, while the neural network learns nonlinear transformations of combinations of predictors.
+:::
+
+### Fit a small regression network
+
+The network's optimization is sensitive to variable scaling and initial weights. We will standardize using training means and standard deviations, and use those same transformations on validation and test observations. We compare only two modest hidden-layer sizes and two fixed random initializations per size.
+
+::: {.callout-caution collapse="false" title="Task"}
+Fit one-hidden-layer neural networks using `nnet`. We will compare networks with different numbers of hidden neurons and different random starts.
+
+Recall that:
+
+- Hidden units: The number of neurons in the hidden layer. Each neuron learns a nonlinear transformation of the four predictors. More hidden neurons increase the network's capacity to represent complex relationships, but may also increase the risk of overfitting.
+- Random starts: Neural-network training begins with randomly initialized weights. Because optimization is nonlinear and nonconvex, different starting weights can produce different fitted models, even when the network architecture is identical.
+
+1.  Specify the candidate networks. Use the `settings` object to establish:
+
+- `settings$nn_hidden_units = c(5, 10)`: Compare networks with 5 and 10 hidden neurons.
+- `settings$nn_starts = 2`: Fit each architecture twice, using different random initial weights.
+
+This produces four candidate networks: two architectures, each estimated from two random starting points.
+
+2.  Fit the networks. Standardize the predictors and response using training-sample means and standard deviations. Train each candidate network, then convert its predictions back to the original normalized-price units.
+
+3.  Select the best network. Evaluate all four candidates using validation RMSE. Select the network with the lowest validation RMSE.
+
+Examine whether increasing the number of hidden neurons improves prediction accuracy and whether different initializations produce meaningfully different results for the same architecture.
+:::
+
+```{r}
+#| label: fit-neural-network
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+
+feature_center <- vapply(train_data[predictors], mean, numeric(1))
+feature_scale <- vapply(train_data[predictors], sd, numeric(1))
+stopifnot(all(feature_scale > 0))
+
+nn_features <- function(data) {
+  x <- feature_matrix(data)
+  x <- sweep(x, 2, feature_center, FUN = "-")
+  sweep(x, 2, feature_scale, FUN = "/")
+}
+
+target_center <- mean(train_data[[target]])
+target_scale <- sd(train_data[[target]])
+stopifnot(target_scale > 0)
+
+nn_response <- (train_data[[target]] - target_center) / target_scale
+
+nn_candidates <- list()
+candidate_number <- 0L
+
+for (hidden_units in settings$nn_hidden_units) {
+  for (start in seq_len(settings$nn_starts)) {
+    candidate_number <- candidate_number + 1L
+    set.seed(settings$seed + 10L * hidden_units + start)
+
+    candidate_fit <- nnet::nnet(
+      x = nn_features(train_data),
+      y = nn_response,
+      size = hidden_units,
+      linout = TRUE,
+      decay = settings$nn_decay,
+      maxit = 300L,
+      MaxNWts = 600L,
+      trace = FALSE
+    )
+
+    candidate_prediction <- as.numeric(predict(
+      candidate_fit, newdata = nn_features(validation_data)
+    )) * target_scale + target_center
+
+    nn_candidates[[candidate_number]] <- list(
+      hidden_units = hidden_units,
+      start = start,
+      fit = candidate_fit,
+      validation_rmse = rmse(
+        validation_data[[target]], candidate_prediction
+      )
+    )
+  }
+}
+
+nn_validation_results <- purrr::map_dfr(nn_candidates, function(candidate) {
+  tibble(
+    `Hidden units` = candidate$hidden_units,
+    `Random Starts` = candidate$start,
+    `Validation RMSE` = candidate$validation_rmse
+  )
+})
+
+best_nn_index <- which.min(nn_validation_results$`Validation RMSE`)
+nn_fit <- nn_candidates[[best_nn_index]]$fit
+
+nn_validation_table <- nn_validation_results |>
+  gt_compact(title = "Small-network validation comparison") |>
+  fmt_number(columns = `Validation RMSE`, decimals = 5)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+nn_validation_table
+```
+:::
+
+::: {.callout-tip title="Question"}
+What do the validation results suggest about the benefits of using more hidden neurons? Why do networks with the same number of hidden neurons produce different RMSE values? Which configuration would you select?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Number of hidden neurons: Increasing the number from 5 to 10 improves validation RMSE in both comparisons. The larger network has greater flexibility to approximate nonlinear relationships.
+- Random Starts: Different starting weights lead the optimization algorithm along different paths and potentially to different solutions. This explains why two networks with identical architectures can have different validation RMSE values.
+- Model selection: The network with 10 hidden neurons and initialization 1 achieves the lowest validation RMSE (0.00486), so we select that fitted model.
+
+Key insight: Network performance depends on both architecture and optimization. Increasing the number of neurons expands the set of functions the network can represent, while different random initializations can lead to different solutions within that set. Greater flexibility does not necessarily imply better out-of-sample performance.
+:::
+
+## Model Evaluation and Comparison
+
+### Hold-Out Sample Prediction Accuracy
+
+We have now completed model development. This is the first use of test outcomes for performance evaluation. A useful out-of-sample $R^2$ compares each model against predicting the training-sample mean for every test contract:
+
+$$
+R^2_{\mathrm{test}}
+=1-\frac{\sum_{i\in\mathrm{test}}(Y_i-\widehat Y_i)^2}
+{\sum_{i\in\mathrm{test}}(Y_i-\overline Y_{\mathrm{train}})^2}.
+$$
+
+With this benchmark, $R^2_{\mathrm{test}}$ can be negative if a model performs worse than the constant training-mean forecast. RMSE and MAE are measured in units of normalized call price $C/K$.
+
+::: {.callout-caution collapse="false" title="Task"}
+Define a common prediction interface for the six fitted models. Evaluate each on the identical test sample and report RMSE, MAE, and out-of-sample $R^2$. Do not revise the models in response to the test results.
+:::
+
+```{r}
+#| label: common-model-evaluation
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+
+model_predictors <- list(
+  "OLS" = function(d) {
+    as.numeric(predict(ols_fit, newdata = d))
+  },
+  "Additive GAM" = function(d) {
+    as.numeric(predict(gam_add_fit, newdata = d))
+  },
+  "Regression Tree" = function(d) {
+    as.numeric(predict(tree_fit, newdata = d))
+  },
+  "Random Forest" = function(d) {
+    as.numeric(predict(forest_fit, data = d)$predictions)
+  },
+  "Gradient Boosting" = function(d) {
+    as.numeric(predict(xgb_fit, newdata = xgboost::xgb.DMatrix(feature_matrix(d))))
+  },
+  "Neural Network" = function(d) {
+    as.numeric(predict(nn_fit, newdata = nn_features(d))) *
+      target_scale + target_center
+  }
+)
+
+model_names <- names(model_predictors)
+
+test_predictions <- purrr::imap_dfr(model_predictors, function(predict_fun, model) {
+  prediction <- predict_fun(test_data)
+  stopifnot(length(prediction) == nrow(test_data), all(is.finite(prediction)))
+  tibble(
+    Option_ID = test_data$Option_ID,
+    Model = model,
+    Actual = test_data[[target]],
+    Predicted = prediction
+  )
+}) |>
+  mutate(Model = factor(Model, levels = model_names))
+
+model_comparison <- test_predictions |>
+  group_by(Model) |>
+  group_modify(~ model_metrics(.x$Actual, .x$Predicted, training_mean)) |>
+  ungroup() |>
+  arrange(RMSE)
+
+model_comparison_table <- model_comparison |>
+  rename(`Test R-squared` = R2_Test) |>
+  gt_compact(
+    title = "Nonlinear regression: common held-out test comparison",
+    subtitle = "All models evaluated on the same 20% test observations"
+  ) |>
+  fmt_number(columns = c(RMSE, MAE, `Test R-squared`), decimals = 5)
+
+best_test_model <- as.character(model_comparison$Model[1])
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+model_comparison_table
+```
+:::
+
+::: {.callout-tip title="Question"}
+- What does RMSE tell us in this application? How does it differ from MAE?
+- Why might the most flexible model not achieve the best test RMSE?
+- Why is a high training $R^2$ insufficient evidence of good generalization?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- RMSE is the square root of the average squared deviation between predicted and observed normalized option prices. MAE is the average absolute deviation. Both have units of $C/K$, but RMSE gives relatively more weight to large mistakes.
+- Flexibility can reduce bias but also fit noise, especially when regularization, optimization, or training coverage is imperfect. Model performance must be established empirically on the held-out data.
+- Training fit measures how well a model describes observations used to estimate its parameters. Generalization asks how well it predicts unseen contracts. A complicated model can improve training fit without improving generalization.
+- For this run, `r best_test_model` has the smallest held-out RMSE. This ranking is a result of the chosen simulation and model settings, not a universal ordering of algorithms.
+:::
+
+::: {.callout-caution collapse="false" title="Task"}
+Compare observed and predicted normalized call prices across the six models using the held-out test sample.
+
+- Randomly select up to 1,200 test contracts to avoid overcrowding the plots. Use the **same contracts** for all six models to ensure comparability.
+- Plot observed normalized prices on the horizontal axis and predicted prices on the vertical axis, using identical axis scales across models.
+- Include a 45-degree line representing perfect predictions. Points closer to this line indicate more accurate predictions.
+
+The preceding performance table evaluates all test observations; this figure uses a smaller sample solely to improve readability.
+:::
+
+```{r}
+#| label: predicted-versus-observed
+#| code-fold: true
+#| code-summary: "Code"
+#| fig-show: hide
+
+set.seed(settings$seed)
+plotted_ids <- sample(test_data$Option_ID, size = min(1200L, nrow(test_data)))
+plot_predictions <- test_predictions |>
+  filter(Option_ID %in% plotted_ids)
+
+axis_limits <- range(c(plot_predictions$Actual, plot_predictions$Predicted))
+
+actual_fitted_plot <- ggplot(plot_predictions, aes(Actual, Predicted)) +
+  geom_point(alpha = 0.30, size = 0.6, color = "#43769B") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "#A0443F") +
+  facet_wrap(~ Model, ncol = 3) +
+  coord_equal(xlim = axis_limits, ylim = axis_limits) +
+  labs(
+    title = "Held-out actual versus predicted normalized prices",
+    subtitle = "Same test contracts and axis scales across models; dashed line = perfect prediction.",
+    x = "Observed C/K", y = "Predicted C/K"
+  )
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 8
+actual_fitted_plot
+```
+:::
+
+### Fitted pricing curves at fixed characteristics
+
+A pooled scatterplot varies many predictors at once. To compare models' implied conditional functions, we instead hold three predictors fixed and change only moneyness. This is not an estimate of how any individual observed contract's outcome varies over time; it is a controlled prediction exercise.
+
+::: {.callout-caution collapse="false" title="Task"}
+Create a prediction grid over moneyness, holding volatility, maturity, and the interest rate at their training medians. Compare all six fitted functions on common axes.
+:::
+
+```{r}
+#| label: conditional-pricing-curves
+#| code-fold: true
+#| code-summary: "Code"
+#| fig-show: hide
+
+# Use the same central moneyness range as in the earlier PDP exercise.
+# Restrict volatility to its central observed range as well.
+v_range <- as.numeric(quantile(train_data$Volatility, c(0.01, 0.99)))
+
+curve_grid <- tibble(
+  Moneyness = seq(m_range[1], m_range[2], length.out = settings$curve_points),
+  Volatility = median(train_data$Volatility),
+  Time_to_Maturity = fixed_maturity,
+  Risk_Free_Rate = fixed_rate
+)
+
+curve_predictions <- purrr::imap_dfr(model_predictors, function(predict_fun, model) {
+  curve_grid |>
+    mutate(Model = model, Predicted = predict_fun(curve_grid))
+}) |>
+  mutate(Model = factor(Model, levels = model_names))
+
+conditional_curve_plot <- ggplot(curve_predictions, aes(Moneyness, Predicted)) +
+  geom_line(color = "#43769B", linewidth = 1) +
+  facet_wrap(~ Model, ncol = 3) +
+  labs(
+    title = "How each model represents the nonlinear pricing relationship",
+    subtitle = paste0(
+      "Volatility = ", round(median(train_data$Volatility), 3),
+      ", maturity = ", round(fixed_maturity, 2), " years, rate = ",
+      round(fixed_rate, 3)
+    ),
+    x = "Moneyness (S/K)", y = "Predicted normalized call price"
+  )
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 8
+conditional_curve_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+Compare the fitted functions. Which methods naturally yield smooth curves, which produce steps, and why? Why might the forest show smaller steps than the single tree?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+OLS with linear predictors produces a straight line. GAM spline effects and a neural network with smooth activations generate smooth fitted functions. A single regression tree predicts a constant within each terminal region and jumps at splits. A forest averages many such region-based predictions, often producing smaller, more numerous steps. Boosted trees also remain an ensemble of piecewise-constant functions when their base learners are ordinary regression trees; their fitted curves can appear visually smooth at moderate plotting resolution, but are not differentiable pricing functions.
+:::
+
+::: {.callout-tip title="Question"}
+Interpret the relationship between moneyness and predicted option prices visualized above.
+
+- How does the predicted normalized call price change as moneyness increases? Does this relationship appear linear or nonlinear?
+- What does the shape of the fitted functions imply about the marginal effect of moneyness?
+- Can we use these curves to determine which model has the greatest predictive accuracy?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Relationship: Holding volatility, maturity, and interest rates constant, predicted call prices generally increase with moneyness. As the underlying stock price rises relative to the strike price, the option becomes more valuable.
+
+- Nonlinearity: The nonlinear models generally capture a curved relationship. At low moneyness (out-of-the-money options), predicted prices are relatively low and may change slowly. As moneyness increases, predicted prices rise more rapidly. For sufficiently deep-in-the-money options, the relationship approaches linearity.
+
+- Marginal effect: The slope of the fitted function represents the marginal change in predicted normalized call price associated with a change in moneyness, holding the other predictors constant. OLS imposes a constant slope. The nonlinear models allow this marginal effect to vary with moneyness, although tree-based models represent the relationship through discrete steps rather than smooth slopes.
+
+- Predictive accuracy: These curves illustrate the functional relationships learned by the models, but they do not establish which model predicts most accurately. We would need to compare predictions against observed prices or the underlying theoretical pricing function to evaluate accuracy.
+:::
+
+### Predictor Importance
+
+The preceding analyses compared predictive accuracy and the nonlinear relationships learned by different models. We now consider a different question: Which predictors contribute most to each model's predictive accuracy?
+
+We use permutation importance to measure how much validation RMSE increases when we randomly shuffle a predictor's values, disrupting its predictive information while leaving the fitted model unchanged.
+
+Unlike PDPs and conditional pricing curves, permutation importance does not reveal the direction or shape of a fitted relationship. Instead, it measures how strongly the model relies on each predictor for accurate predictions.
+
+#### Permutation importance: Which predictors matter for prediction?
+
+Permutation importance asks how much a model's prediction error deteriorates when we shuffle one predictor, breaking its correspondence with the outcome and the other features. Unlike the built-in forest importance or boosting gain displayed earlier, the calculation below uses the same method, sample, and RMSE scale for all six models.
+
+::: {.callout-caution collapse="false" title="Task"}
+On a common validation subset, permute each of the four predictors five times for each model. Plot the increase in RMSE relative to unpermuted data. Show all four features in every model panel.
+:::
+
+```{r}
+#| label: common-permutation-importance
+#| code-fold: true
+#| code-summary: "Code"
+#| fig-show: hide
+
+set.seed(settings$seed + 201L)
+importance_sample <- validation_data[
+  sample.int(nrow(validation_data),
+             min(settings$permutation_n, nrow(validation_data))),
+]
+
+# Exactly the same randomized feature permutations are used for each model.
+permutation_orders <- setNames(
+  lapply(predictors, function(variable) {
+    replicate(settings$permutation_repeats,
+              sample.int(nrow(importance_sample)), simplify = FALSE)
+  }),
+  predictors
+)
+
+common_permutation_importance <- purrr::imap_dfr(
+  model_predictors, function(predict_fun, model) {
+    baseline_rmse <- rmse(
+      importance_sample[[target]], predict_fun(importance_sample)
+    )
+    purrr::map_dfr(predictors, function(variable) {
+      permutation_rmse <- purrr::map_dbl(permutation_orders[[variable]],
+                                         function(perm_index) {
+        permuted_data <- importance_sample
+        permuted_data[[variable]] <- permuted_data[[variable]][perm_index]
+        rmse(importance_sample[[target]], predict_fun(permuted_data))
+      })
+      tibble(
+        Model = model,
+        Feature = variable,
+        Increase_in_RMSE = mean(permutation_rmse) - baseline_rmse
+      )
+    })
+  }
+) |>
+  mutate(
+    Model = factor(Model, levels = model_names),
+    Feature = factor(Feature, levels = rev(predictors))
+  )
+
+common_permutation_plot <- ggplot(
+  common_permutation_importance,
+  aes(Feature, Increase_in_RMSE)
+) +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "gray45") +
+  geom_col(fill = "#43769B", width = 0.65) +
+  coord_flip() +
+  facet_wrap(~ Model, ncol = 3) +
+  labs(
+    title = "Common permutation importance across six fitted models",
+    subtitle = "Same validation contracts; mean increase in RMSE over five permutations",
+    x = NULL, y = "Increase in validation RMSE (C/K)"
+  )
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 8
+common_permutation_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+- Which predictors are most important to each model's validation prediction accuracy?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- Moneyness dominates: All six models identify moneyness as the most important predictor. Permuting moneyness increases validation RMSE by approximately 0.08–0.11, substantially more than any other predictor.
+
+- Volatility and maturity are moderately important: For OLS, GAM, Random Forest, Gradient Boosting, and the Neural Network, permuting either variable increases RMSE by approximately 0.025–0.04. Both contain valuable predictive information, although their relative importance varies slightly across models.
+
+- Risk-free rate contributes very little: Permuting the risk-free rate produces almost no deterioration in predictive accuracy across all six models.
+
+- The single regression tree is distinctive: Although moneyness remains dominant, volatility and maturity have much smaller importance values than in the other models. This is consistent with the tree's shallow structure: its limited number of splits restricts how extensively it can use these predictors.
+
+- Despite substantial differences in model structure, five of the six models reach remarkably similar conclusions about which predictors matter most. The single regression tree illustrates how limited model complexity can constrain the predictive information captured from individual features.
+:::
+
+## Black–Scholes–Merton as the true conditional mean
+
+The simulation calculated theoretical prices from the European call Black–Scholes–Merton formula without dividends:
+
+$$
+\frac{C}{K}
+=M\Phi(d_1)-e^{-rT}\Phi(d_2),
+$$
+
+where
+
+$$
+d_1=\frac{\ln M+(r+\sigma^2/2)T}{\sigma\sqrt{T}},
+\qquad d_2=d_1-\sigma\sqrt{T}.
+$$
+
+Here $\Phi(\cdot)$ denotes the standard normal cumulative distribution function. The script generated the student target by multiplying theoretical prices by positive, mean-one lognormal noise, with a calibration aimed at making the noise standard deviation approximately 5% of the standard deviation of theoretical prices. This preserves positive prices and creates heteroskedastic noise: larger theoretical prices generally have larger absolute disturbances.
+
+The theoretical prices were never included in the exported workbook, and we did not use them for estimation, hyperparameter selection, or test-model ranking.
+
+::: {.callout-caution collapse="false" title="Task"}
+Implement the true formula directly, using only observed option characteristics. Evaluate it on the test data and on the same visualization grids. Compare fitted functions with the true conditional mean, separately from their errors against noisy observed prices.
+:::
+
+```{r}
+#| label: true-pricing-function-reveal
+#| code-fold: true
+#| code-summary: "Code"
+#| results: hide
+
+bs_normalized_call <- function(moneyness, volatility, maturity, rate) {
+  stopifnot(
+    all(is.finite(moneyness)), all(moneyness > 0),
+    all(is.finite(volatility)), all(volatility > 0),
+    all(is.finite(maturity)), all(maturity > 0),
+    all(is.finite(rate))
+  )
+  vol_time <- volatility * sqrt(maturity)
+  d1 <- (log(moneyness) + (rate + 0.5 * volatility^2) * maturity) / vol_time
+  d2 <- d1 - vol_time
+  moneyness * pnorm(d1) - exp(-rate * maturity) * pnorm(d2)
+}
+
+true_price <- function(data) {
+  bs_normalized_call(
+    data$Moneyness,
+    data$Volatility,
+    data$Time_to_Maturity,
+    data$Risk_Free_Rate
+  )
+}
+
+# Common grid for comparison with the known pricing surface.
+surface_grid <- tidyr::crossing(
+  Moneyness = seq(m_range[1], m_range[2], length.out = settings$surface_points),
+  Volatility = seq(v_range[1], v_range[2], length.out = settings$surface_points)
+) |>
+  mutate(Time_to_Maturity = fixed_maturity, Risk_Free_Rate = fixed_rate)
+
+surface_predictions <- purrr::imap_dfr(
+  model_predictors, function(predict_fun, model) {
+    surface_grid |>
+      mutate(Model = model, Predicted = predict_fun(surface_grid))
+  }
+) |>
+  mutate(Model = factor(Model, levels = model_names))
+
+true_test_price <- true_price(test_data)
+true_curve_price <- true_price(curve_grid)
+true_surface_price <- true_price(surface_grid)
+
+# For the same fixed model predictions, change only the evaluation target:
+# noisy observed prices -> known theoretical conditional mean.
+true_mean_comparison <- test_predictions |>
+  left_join(
+    tibble(Option_ID = test_data$Option_ID, True = true_test_price),
+    by = "Option_ID"
+  ) |>
+  group_by(Model) |>
+  summarise(
+    `RMSE vs observed` = rmse(Actual, Predicted),
+    `RMSE vs true mean` = rmse(True, Predicted),
+    .groups = "drop"
+  ) |>
+  arrange(`RMSE vs true mean`)
+
+# Theoretical conditional-mean benchmark on the observed test outcomes:
+noise_benchmark_rmse <- rmse(test_data[[target]], true_test_price)
+
+best_true_model <- as.character(true_mean_comparison$Model[1])
+
+true_mean_comparison_table <- true_mean_comparison |>
+  gt_compact(
+    title = "Two distinct targets for prediction-error evaluation",
+    subtitle = paste0(
+      "RMSE of true conditional mean against noisy test prices = ",
+      sprintf("%.5f", noise_benchmark_rmse)
+    )
+  ) |>
+  fmt_number(columns = c(`RMSE vs observed`, `RMSE vs true mean`), decimals = 5)
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+true_mean_comparison_table
+```
+:::
+
+Earlier we examined the six fitted curves without knowing the true function. Overlaying the Black–Scholes curve on the **same prediction grid** now shows not just how flexible each model is, but how well it reproduces the underlying conditional mean on this slice of predictor space.
+
+::: {.callout-caution collapse="false" title="Task"}
+Overlay the known theoretical pricing curve with every model's prediction, holding the other option characteristics fixed. Explain which models approximate the true conditional mean most closely on this slice of predictor space.
+:::
+
+```{r}
+#| label: true-pricing-curve-comparison
+#| code-fold: true
+#| code-summary: "Code"
+#| fig-show: hide
+
+true_curve <- curve_grid |>
+  mutate(True = true_curve_price)
+
+true_curve_comparison_plot <- ggplot(
+  curve_predictions,
+  aes(Moneyness, Predicted)
+) +
+  geom_line(color = "#43769B", linewidth = 1) +
+  geom_line(
+    data = true_curve,
+    aes(x = Moneyness, y = True),
+    inherit.aes = FALSE,
+    color = "#A0443F", linewidth = 1,
+    linetype = "dashed"
+  ) +
+  facet_wrap(~ Model, ncol = 3) +
+  labs(
+    title = "Model predictions versus the true conditional mean",
+    subtitle = "Blue: model prediction; dashed red: Black–Scholes normalized price",
+    x = "Moneyness (S/K)", y = "Normalized call price (C/K)"
+  )
+```
+
+::: {.callout-note collapse="true" title="Output"}
+```{r}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 8
+true_curve_comparison_plot
+```
+:::
+
+::: {.callout-tip title="Question"}
+- Why can the exact true conditional mean have a nonzero RMSE against the observed option prices?
+- Why is the RMSE of estimated models against the true pricing function a different object from their RMSE against noisy observed prices?
+- Which model best approximates the theoretical function on the test observations? Does that necessarily mean it is best at every point on the pricing surface?
+- What does this controlled exercise reveal about the limitations of interpreting prediction accuracy as proof that a particular algorithm captures economic mechanisms?
+:::
+
+::: {.callout-note collapse="true" title="Answer"}
+- The observed dependent variable includes stochastic pricing noise. Even if our estimated function exactly matched the true conditional mean, it would not predict the individual noise realizations. Thus the true function can have a positive RMSE against observed prices.
+- RMSE versus observed prices combines approximation error and realized observational noise. RMSE versus the true function isolates how closely the fitted function approximates the conditional mean on the chosen evaluation observations. The former is the practical prediction benchmark ordinarily available; the latter is possible here only because the data are simulated.
+- For this run, `r best_true_model` has the smallest `RMSE vs true mean` on test observations. The optional surface-error plots can show regions where even a model with low overall error performs relatively poorly; an average error metric does not establish uniform dominance.
+- Prediction accuracy alone does not establish that a model recovered the true mechanism, nor does learning simulated Black–Scholes prices prove superior real-market option pricing. In real financial data, the conditional mean and noise distribution are not directly observable, and the data-generating process can change.
+:::
