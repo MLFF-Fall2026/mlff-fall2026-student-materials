@@ -3213,7 +3213,8 @@ f(x_i)=\sum_{g=1}^{G}\pi_g\,\phi(x_i\mid\mu_g,\Sigma_g),
 </div>
 <div id="callout-20" class="callout-20-contents callout-collapse collapse">
 <div class="callout-body-container callout-body">
-<p>The 3 component model seems to fit better, as indicated by the lower information criterion.</p>
+<p>The two-component model is preferred because its mclust_BIC (−156.22) is higher than that of the three-component model (−165.27). Although the three-component model has a higher log-likelihood, the improvement does not justify its additional complexity. Note that mclust uses a BIC convention in which higher values are preferred.</p>
+<p>For the usual textbook convention, <span class="math inline">\(\mathrm{BIC}=-2\log\widehat L+p\log n\)</span> and <strong>lower</strong> is preferable. <code>mclust</code> reports the negative of that expression, <span class="math inline">\(2\log\widehat L-p\log n\)</span>, so the preferred model <strong>maximizes</strong> its reported BIC.</p>
 </div>
 </div>
 </div>

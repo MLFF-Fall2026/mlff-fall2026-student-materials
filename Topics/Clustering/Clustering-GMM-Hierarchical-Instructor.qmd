@@ -445,7 +445,10 @@ Which model seems to fit better?
 :::
 
 ::: {.callout-note collapse="true" title="Answer"}
-The 3 component model seems to fit better, as indicated by the lower information criterion. 
+The two-component model is preferred because its mclust_BIC (−156.22) is higher than that of the three-component model (−165.27). Although the three-component model has a higher log-likelihood, the improvement does not justify its additional complexity. Note that mclust uses a BIC convention in which higher values are preferred.
+
+For the usual textbook convention, $\mathrm{BIC}=-2\log\widehat L+p\log n$ and **lower** is preferable. `mclust` reports the negative of that expression, $2\log\widehat L-p\log n$, so the preferred model **maximizes** its reported BIC.
+
 :::
 
 
